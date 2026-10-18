@@ -1,0 +1,15 @@
+BT Audio Splitter
+
+Required Notice: Copyright (c) 2026 Marcus Beckerle.
+Required Notice: BT Audio Splitter by Marcus Beckerle — https://github.com/MarcusBeckerle/bt_audio_splitter
+
+The original project code is licensed under the PolyForm Noncommercial
+License 1.0.0 in LICENSE. The Required Notice lines above must accompany
+redistributed copies as required by that license.
+
+A separate paid license is required for commercial uses not permitted by
+LICENSE. See COMMERCIAL-LICENSE.md for how to request one.
+
+Third-party software, including NAudio, the .NET runtime, and VB-CABLE,
+remains subject to its own licenses. This notice does not relicense those
+components or claim ownership of them.

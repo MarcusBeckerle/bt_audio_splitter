@@ -43,6 +43,11 @@ selbst öffnet ausschließlich Render-Endpunkte und deren WASAPI-Loopback.
 
 ## Bedienung
 
+Der Eingang und die Einrichtung zeigen den Treiberstatus mit Text und Farbe:
+**Rot: Treiber fehlt, Eingang nicht bereit oder Fehler. Grün: Eingang bereit.**
+Während Prüfung oder Einrichtung ist die Anzeige gelb. Nicht mehr vorhandene
+Windows-Geräte werden nicht als installierter Treiber gewertet.
+
 | Bedienelement | Wirkung |
 | --- | --- |
 | Hinzufügen | Bis zu fünf unterschiedliche Windows-Ausgaben auswählen; Offline-Geräte sind erlaubt. |

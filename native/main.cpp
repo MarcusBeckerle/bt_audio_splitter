@@ -13,6 +13,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (!args) throw std::runtime_error("Argumente konnten nicht gelesen werden.");
         if (count == 3 && std::wstring(args[1]) == L"--rename-cable") { renameCable(utf8(args[2])); return 0; }
         if (count == 3 && std::wstring(args[1]) == L"--preview") return runUi(instance, args[2]);
+        if (count == 3 && std::wstring(args[1]) == L"--preview-missing-driver") return runUi(instance, args[2], true);
         if (count == 3 && std::wstring(args[1]) == L"--diagnose") {
             std::string report;
             for (const auto& d : enumerateOutputs()) report += d.name + "\t" + (d.available ? "active" : "offline") + "\t" + (d.cable ? "cable" : "output") + "\t" + d.id + "\n";

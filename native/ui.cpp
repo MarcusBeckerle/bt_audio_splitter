@@ -168,6 +168,15 @@ class Window {
         for (auto& r : rows_) for (auto control : {r.toggle, r.menu, r.slider}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(fonts_[0]), TRUE);
     }
     int rowsBottom() const { return 288 + (rows_.empty() ? 75 : static_cast<int>(rows_.size()) * 158); }
+    std::pair<std::wstring, COLORREF> inputStatus() const {
+        constexpr COLORREF red = RGB(193, 52, 60), green = RGB(24, 132, 96), amber = RGB(158, 104, 17);
+        if (busy_ || snapshot_.suspended) return {L"Einrichtung läuft", amber};
+        if (!snapshot_.error.empty()) return {L"Bitte prüfen", red};
+        if (!snapshot_.devicesChecked) return {L"Wird geprüft …", amber};
+        if (!snapshot_.driverInstalled) return {L"Treiber fehlt", red};
+        if (!snapshot_.sourceReady) return {L"Eingang nicht bereit", red};
+        return {L"Bereit", green};
+    }
     int setupTop() const { return rowsBottom() + 56 + (snapshot_.error.empty() ? 0 : 64); }
     void layout() {
         RECT client; GetClientRect(window_, &client); width_ = MulDiv(client.right, 96, dpi_);
@@ -196,7 +205,7 @@ class Window {
     }
     void update() {
         if (audio_) snapshot_ = audio_->snapshot();
-        if (!initialized_ && (!snapshot_.devices.empty() || !snapshot_.error.empty())) { expanded_ = !snapshot_.sourceReady; initialized_ = true; }
+        if (!initialized_ && (snapshot_.devicesChecked || !snapshot_.error.empty())) { expanded_ = !snapshot_.sourceReady; initialized_ = true; }
         bool changed = rows_.size() != snapshot_.routes.size();
         if (!changed) for (std::size_t i = 0; i < rows_.size(); ++i) if (rows_[i].id != snapshot_.routes[i].preference.id) changed = true;
         if (changed) {
@@ -228,7 +237,7 @@ class Window {
         }
         EnableWindow(buttons_[addId], rows_.size() < maxOutputs && !busy_);
         for (int id : {driverId, renameId, sourceId}) EnableWindow(buttons_[id], !busy_ && (id == driverId || snapshot_.sourceReady || id == sourceId));
-        bool installed = std::any_of(snapshot_.devices.begin(), snapshot_.devices.end(), [](const auto& d) { return d.cable; });
+        bool installed = snapshot_.driverInstalled;
         setText(buttons_[driverId], installed ? L"Treiber entfernen …" : L"Treiber installieren …");
         setText(buttons_[setupId], expanded_ ? L"⌄  Einrichtung" : L"›  Einrichtung");
         layout();
@@ -242,7 +251,8 @@ class Window {
         rounded(dc, rect(24, 86, w, 134), RGB(255, 255, 255), static_cast<float>(d(10)));
         text(dc, fonts_[1], L"AUDIOEINGANG", rect(42, 101, w - 36, 20), muted);
         text(dc, fonts_[2], L"Audio Splitter", rect(42, 129, 170, 28));
-        text(dc, fonts_[0], snapshot_.sourceReady ? L"● Bereit" : L"● Einrichtung nötig", rect(220, 133, w - 200, 24), snapshot_.sourceReady ? RGB(24, 132, 96) : muted);
+        auto [health, healthColor] = inputStatus();
+        text(dc, fonts_[0], L"● " + health, rect(220, 133, w - 200, 24), healthColor);
         text(dc, fonts_[1], wide(snapshot_.sourceName), rect(42, 164, w - 36, 20), muted);
         text(dc, fonts_[1], L"Im Player oder in Windows als Ausgabe wählen.", rect(42, 188, w - 36, 20), muted);
         text(dc, fonts_[2], L"Kopfhörer · " + std::to_wstring(rows_.size()) + L" von 5", rect(24, 242, w - 150, 30));
@@ -270,7 +280,8 @@ class Window {
         int y = setupTop();
         rounded(dc, rect(24, y, w, expanded_ ? 276 : 60), RGB(255, 255, 255), static_cast<float>(d(10)));
         if (expanded_) {
-            text(dc, fonts_[0], snapshot_.sourceReady ? L"Virtueller Audiotreiber: bereit" : L"Virtueller Audiotreiber: nicht bereit", rect(40, y + 56, w - 32, 24), muted);
+            auto driverText = snapshot_.devicesChecked && !snapshot_.driverInstalled ? L"● Virtueller Audiotreiber: nicht installiert" : L"● Virtueller Audiotreiber: " + health;
+            text(dc, fonts_[0], driverText, rect(40, y + 56, w - 32, 24), healthColor);
             std::wstring message; { std::lock_guard lock(setupMutex_); message = setupMessage_; }
             if (!message.empty()) text(dc, fonts_[1], message, rect(40, y + 174, w - 32, 39), muted, DT_WORDBREAK | DT_NOPREFIX);
             text(dc, fonts_[1], L"Nur Stereo-Ausgabe · Kein Mikrofonzugriff", rect(40, y + 212, w - 32, 21), muted);
@@ -337,7 +348,7 @@ class Window {
         else if (id == aboutId) about();
         else if (id == renameId) backgroundTask(true);
         else if (id == driverId) {
-            bool installed = std::any_of(snapshot_.devices.begin(), snapshot_.devices.end(), [](const auto& d) { return d.cable; });
+            bool installed = snapshot_.driverInstalled;
             if (installed && MessageBoxW(window_, L"Das VB-CABLE-Setup wird geöffnet. Dort „Remove Driver“ wählen. Der Treiber kann auch von anderen Programmen verwendet werden. Danach Windows neu starten.", L"Treiber entfernen", MB_OKCANCEL | MB_ICONINFORMATION) != IDOK) return;
             backgroundTask(false);
         } else if (id >= 100 && id < 115) {
@@ -442,11 +453,16 @@ class Window {
         return DefWindowProcW(window_, message, wp, lp);
     }
 public:
-    explicit Window(bool preview) : preview_(preview) {
+    explicit Window(bool preview, bool missingDriver = false) : preview_(preview) {
         if (preview) {
-            initialized_ = true; expanded_ = true; snapshot_.sourceReady = true; snapshot_.sourceName = "Audio Splitter (VB-Audio Virtual Cable)";
+            initialized_ = true; expanded_ = true; snapshot_.devicesChecked = true; snapshot_.sourceReady = true; snapshot_.driverInstalled = true; snapshot_.sourceName = "Audio Splitter (VB-Audio Virtual Cable)";
             snapshot_.devices.push_back({"cable", "Audio Splitter", true, true, false});
             snapshot_.routes = {{{"demo-1", "Sony WH-1000XM5", 75, true}, RouteState::Playing, {}}, {{"demo-2", "Bose QuietComfort", 60, true}, RouteState::Playing, {}}};
+            if (missingDriver) {
+                snapshot_.driverInstalled = false; snapshot_.sourceReady = false; snapshot_.devices.clear();
+                snapshot_.sourceName = "Bitte VB-CABLE über die Einrichtung installieren.";
+                for (auto& route : snapshot_.routes) route.state = RouteState::WaitingSource;
+            }
         }
     }
     ~Window() {
@@ -495,7 +511,7 @@ public:
     }
 };
 } // namespace
-int runUi(HINSTANCE instance, const std::filesystem::path& preview) {
+int runUi(HINSTANCE instance, const std::filesystem::path& preview, bool missingDriver) {
     appInstance = instance;
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     Gdiplus::GdiplusStartupInput startup; ULONG_PTR token = 0;
@@ -504,7 +520,7 @@ int runUi(HINSTANCE instance, const std::filesystem::path& preview) {
     WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = instance; cls.hCursor = LoadCursor(nullptr, IDC_ARROW);
     cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1)); cls.hIconSm = cls.hIcon; cls.lpfnWndProc = Window::proc; cls.lpszClassName = L"BtAudioSplitterNative";
     RegisterClassExW(&cls); cls.lpfnWndProc = Modal::proc; cls.lpszClassName = L"AudioSplitterModal"; cls.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1); RegisterClassExW(&cls);
-    Window window(!preview.empty()); HWND handle = window.create();
+    Window window(!preview.empty(), missingDriver); HWND handle = window.create();
     if (!preview.empty()) { window.preview(preview); return 0; }
     ShowWindow(handle, SW_SHOWNORMAL); UpdateWindow(handle);
     MSG message{};

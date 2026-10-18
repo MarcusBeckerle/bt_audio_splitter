@@ -9,7 +9,7 @@
 namespace splitter {
 struct Endpoint {
     std::string id, name;
-    bool available = false, cable = false, handsFree = false;
+    bool available = false, cable = false, handsFree = false, present = true;
 };
 struct RouteView { Output preference; RouteState state = RouteState::Paused; std::string error; };
 struct Snapshot {
@@ -17,7 +17,7 @@ struct Snapshot {
     std::vector<Endpoint> devices;
     std::vector<RouteView> routes;
     std::string sourceName, error;
-    bool sourceReady = false, suspended = false;
+    bool sourceReady = false, suspended = false, devicesChecked = false, driverInstalled = false;
 };
 std::vector<Endpoint> enumerateOutputs();
 void renameCable(const std::string& id);

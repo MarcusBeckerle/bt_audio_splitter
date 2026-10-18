@@ -198,7 +198,7 @@ class Engine {
     std::map<std::string, std::unique_ptr<OutputSession>> sinks_;
     std::map<std::string, std::string> routeErrors_;
     std::string sourceId_, sourceError_, warning_, saveError_, lastSaved_;
-    bool suspended_ = false;
+    bool suspended_ = false, devicesChecked_ = false;
 public:
     Engine() { settings_ = loadSettings(warning_); lastSaved_ = serialize(settings_); }
     void commands(std::vector<std::function<void(Settings&, bool&)>>& list) {
@@ -209,6 +209,7 @@ public:
     }
     void enumerate() {
         devices_ = enumerateOutputs();
+        devicesChecked_ = true;
         if (settings_.source.empty()) {
             auto it = std::find_if(devices_.begin(), devices_.end(), [](const auto& d) { return d.cable && d.available && !contains(d.name, "16"); });
             if (it != devices_.end()) settings_.source = it->id;
@@ -264,6 +265,8 @@ public:
     }
     Snapshot snapshot() {
         Snapshot s; s.settings = settings_; s.devices = devices_; s.suspended = suspended_;
+        s.devicesChecked = devicesChecked_;
+        s.driverInstalled = std::any_of(devices_.begin(), devices_.end(), [](const auto& d) { return d.cable && d.present; });
         const auto* input = find(devices_, settings_.source);
         s.sourceReady = input && input->available && input->cable;
         s.sourceName = input ? input->name : "VB-CABLE noch nicht verfügbar";
@@ -298,7 +301,7 @@ std::vector<Endpoint> enumerateOutputs() {
             auto hardware = property(props.get(), PKEY_DeviceInterface_FriendlyName);
             bool cable = contains(hardware, "vb-audio virtual cable");
             bool handsFree = contains(name, "hands-free") || contains(name, "handsfree") || contains(name, "freisprech") || contains(name, "ag audio");
-            result.push_back({utf8(raw), name, state == DEVICE_STATE_ACTIVE, cable, handsFree});
+            result.push_back({utf8(raw), name, state == DEVICE_STATE_ACTIVE, cable, handsFree, (state & DEVICE_STATE_NOTPRESENT) == 0});
         } catch (const std::exception&) { /* Removal may race enumeration; retry on the next tick. */ }
     }
     std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
@@ -330,6 +333,7 @@ void AudioWorker::run() noexcept {
     try {
         ComApartment apartment;
         Engine engine;
+        std::string enumerationError;
         auto enumerationAt = Clock::now(), publishAt = Clock::now(), saveAt = Clock::now();
         while (true) {
             std::vector<std::function<void(Settings&, bool&)>> commands;
@@ -338,16 +342,15 @@ void AudioWorker::run() noexcept {
             engine.commands(commands);
             if (stopped) { engine.save(); break; }
             auto now = Clock::now(); bool retry = now >= enumerationAt;
-            std::string error;
             if (retry) {
-                try { engine.enumerate(); }
-                catch (const std::exception& e) { error = e.what(); logError(e.what()); }
+                try { engine.enumerate(); enumerationError.clear(); }
+                catch (const std::exception& e) { enumerationError = e.what(); logError(e.what()); }
                 enumerationAt = now + std::chrono::seconds(1);
             }
             engine.reconcile(retry); engine.pump();
             if (now >= saveAt) { engine.save(); saveAt = now + std::chrono::milliseconds(250); }
             if (!commands.empty() || now >= publishAt) {
-                auto s = engine.snapshot(); if (!error.empty()) s.error = error;
+                auto s = engine.snapshot(); if (!enumerationError.empty()) s.error = enumerationError;
                 { std::lock_guard lock(mutex_); snapshot_ = std::move(s); }
                 publishAt = now + std::chrono::milliseconds(200);
             }

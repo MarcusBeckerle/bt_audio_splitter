@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.7 — 2026-10-18 — Prerelease
+
+- Give each frequency display its own buffered child window. Meter updates no
+  longer invalidate the main surface containing the setup section and controls.
+- Buffer every owner-drawn button independently, including the setup heading,
+  and suppress separate background erasure. This also covers direct drawing
+  outside WM_PAINT. Only change enabled state when it actually changes.
+- Remove the whole-window WS_EX_COMPOSITED workaround from 0.1.6; retain batched
+  layout and buffered parent, sliders, buttons and graphs.
+- Add a real message-loop regression with changing spectra: compare static
+  control pixels after intermediate messages and require zero parent/button
+  redraws. Keep the 630 scroll, drag, scaling and state image comparisons.
+
 ## 0.1.6 — 2026-10-18 — Prerelease
 
 - Fix flicker across sliders, pause/menu buttons and setup: compose the parent

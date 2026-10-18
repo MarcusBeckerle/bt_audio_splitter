@@ -26,6 +26,7 @@ std::wstring controlText(HWND control) {
     GetWindowTextW(control, text.data(), length + 1); text.resize(length); return text;
 }
 void setText(HWND control, const std::wstring& text) { if (controlText(control) != text) SetWindowTextW(control, text.c_str()); }
+void setEnabled(HWND control, bool enabled) { if (static_cast<bool>(IsWindowEnabled(control)) != enabled) EnableWindow(control, enabled); }
 HFONT font(int size, int weight, UINT dpi) {
     return CreateFontW(-MulDiv(size, dpi, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -45,6 +46,9 @@ void rounded(HDC dc, RECT rect, COLORREF color, float radius, COLORREF border = 
     if (border != CLR_INVALID) { Gdiplus::Pen pen(c(border)); g.DrawPath(&pen, &path); }
 }
 LRESULT CALLBACK focusProc(HWND control, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    // Owner-drawn controls cover their complete surface in one buffered draw.
+    // Never let BUTTON erase it separately before the label/icon is ready.
+    if (message == WM_ERASEBKGND) return 1;
     if (message == WM_SETFOCUS) SendMessageW(GetParent(control), controlFocused, reinterpret_cast<WPARAM>(control), 0);
     return DefSubclassProc(control, message, wp, lp);
 }
@@ -171,10 +175,11 @@ struct Modal {
     }
 };
 
-struct Row { std::string id; HWND toggle, menu, slider, mute; };
+struct Row { std::string id; HWND toggle, menu, slider, mute, spectrum; };
 class Window {
     friend struct WindowRenderingTest;
     HWND window_ = nullptr;
+    HWND inputSpectrum_ = nullptr;
     UINT dpi_ = 96;
     int scroll_ = 0, contentHeight_ = 0, width_ = 640;
     bool expanded_ = false, initialized_ = false, preview_ = false;
@@ -239,11 +244,13 @@ class Window {
         SetScrollInfo(window_, SB_VERT, &info, TRUE);
         place(buttons_[muteId], right - 160, 24, 160, 42);
         place(buttons_[addId], right - 142, 318, 142, 36);
+        place(inputSpectrum_, 40, 210, width_ - 80, 83);
         for (std::size_t i = 0; i < rows_.size(); ++i) {
             auto& r = rows_[i]; int y = outputTop + static_cast<int>(i) * outputStep;
             place(r.toggle, right - 156, y + 18, 100, 34); place(r.menu, right - 48, y + 18, 32, 34);
             place(r.slider, 76, y + 105, width_ - 174, 30);
             place(r.mute, 38, y + 103, 34, 34);
+            place(r.spectrum, 40, y + 146, width_ - 80, 83);
         }
         int y = setupTop();
         place(buttons_[setupId], 40, y + 12, width_ - 80, 34);
@@ -280,9 +287,15 @@ class Window {
         { std::lock_guard lock(setupMutex_); key << std::quoted(utf8(setupMessage_)); }
         return key.str();
     }
-    void invalidateSpectrum(int y) {
-        auto bounds = rect(40, y, width_ - 80, 62);
-        InvalidateRect(window_, &bounds, FALSE);
+    HWND spectrumControl(int id) {
+        HWND control = CreateWindowExW(0, L"BtAudioSplitterSpectrum", L"Frequenzanzeige", WS_CHILD | WS_VISIBLE,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), appInstance, nullptr);
+        if (!control) throw std::runtime_error("Frequenzanzeige konnte nicht erstellt werden.");
+        return control;
+    }
+    void invalidateSpectra() {
+        InvalidateRect(inputSpectrum_, nullptr, FALSE);
+        for (const auto& row : rows_) InvalidateRect(row.spectrum, nullptr, FALSE);
     }
     void update() {
         if (audio_) snapshot_ = audio_->snapshot();
@@ -290,11 +303,11 @@ class Window {
         bool changed = rows_.size() != snapshot_.routes.size();
         if (!changed) for (std::size_t i = 0; i < rows_.size(); ++i) if (rows_[i].id != snapshot_.routes[i].preference.id) changed = true;
         if (changed) {
-            for (auto& r : rows_) { DestroyWindow(r.toggle); DestroyWindow(r.menu); DestroyWindow(r.slider); DestroyWindow(r.mute); } rows_.clear();
+            for (auto& r : rows_) { DestroyWindow(r.toggle); DestroyWindow(r.menu); DestroyWindow(r.slider); DestroyWindow(r.mute); DestroyWindow(r.spectrum); } rows_.clear();
             for (std::size_t i = 0; i < snapshot_.routes.size(); ++i) {
                 int base = 100 + static_cast<int>(i) * 3;
                 Row r{snapshot_.routes[i].preference.id, button(window_, base, L"Pausieren"), button(window_, base + 1, L"⋯"), nullptr,
-                    button(window_, 200 + static_cast<int>(i), L"Ausgabe stummschalten")};
+                    button(window_, 200 + static_cast<int>(i), L"Ausgabe stummschalten"), spectrumControl(300 + static_cast<int>(i))};
                 r.slider = CreateWindowExW(0, TRACKBAR_CLASSW, L"Lautstärke", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS, 0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(base + 2)), appInstance, nullptr);
                 SendMessageW(r.slider, TBM_SETRANGE, FALSE, MAKELPARAM(0, 100)); SendMessageW(r.slider, TBM_SETPAGESIZE, 0, 5);
                 SetWindowSubclass(r.slider, focusProc, 1, 0);
@@ -320,8 +333,8 @@ class Window {
                 SendMessageW(rows_[i].slider, TBM_SETPOS, TRUE, preference.volume);
             setText(rows_[i].slider, L"Lautstärke " + wide(preference.name));
         }
-        EnableWindow(buttons_[addId], rows_.size() < maxOutputs && !busy_);
-        for (int id : {driverId, renameId, sourceId}) EnableWindow(buttons_[id], !busy_ && (id == driverId || snapshot_.sourceReady || id == sourceId));
+        setEnabled(buttons_[addId], rows_.size() < maxOutputs && !busy_);
+        for (int id : {driverId, renameId, sourceId}) setEnabled(buttons_[id], !busy_ && (id == driverId || snapshot_.sourceReady || id == sourceId));
         bool installed = snapshot_.driverInstalled;
         setText(buttons_[driverId], installed ? L"Treiber entfernen …" : L"Treiber installieren …");
         setText(buttons_[setupId], expanded_ ? L"⌄  Einrichtung" : L"›  Einrichtung");
@@ -333,11 +346,37 @@ class Window {
             InvalidateRect(window_, nullptr, FALSE);
             // Mute colors/icons can change without a change in button text.
             for (const auto& row : rows_) InvalidateRect(row.mute, nullptr, FALSE);
+            invalidateSpectra();
         } else if (!moved && paintedSpectrum_ != snapshot_.spectrum) {
-            invalidateSpectrum(210);
-            for (std::size_t i = 0; i < rows_.size(); ++i) invalidateSpectrum(outputTop + static_cast<int>(i) * outputStep + 146);
+            // Graphs own their pixels: a meter tick never invalidates the parent
+            // or crosses native BUTTON/trackbar surfaces, even under composition.
+            invalidateSpectra();
         }
         paintedSpectrum_ = snapshot_.spectrum;
+    }
+    void paintSpectrum(HWND control, HDC target) {
+        RECT bounds{}; GetClientRect(control, &bounds);
+        if (bounds.right <= 0 || bounds.bottom <= 0) return;
+        HDC dc = CreateCompatibleDC(target);
+        HBITMAP bitmap = CreateCompatibleBitmap(target, bounds.right, bounds.bottom);
+        if (!dc || !bitmap) {
+            if (bitmap) DeleteObject(bitmap);
+            if (dc) DeleteDC(dc);
+            return; // Keep the last complete graph under transient GDI pressure.
+        }
+        auto old = SelectObject(dc, bitmap); FillRect(dc, &bounds, whiteBrush_);
+        Spectrum values = snapshot_.spectrum;
+        int index = GetDlgCtrlID(control) - 300;
+        if (index >= 0 && static_cast<std::size_t>(index) < rows_.size()) {
+            const auto& route = snapshot_.routes[index];
+            int volume = static_cast<int>(SendMessageW(rows_[index].slider, TBM_GETPOS, 0, 0));
+            values = outputSpectrum(values, volume, route.state == RouteState::Playing && !snapshot_.settings.muted && !route.preference.muted);
+        }
+        try {
+            drawSpectrum(dc, values, RECT{0, 0, bounds.right, d(62)});
+            BitBlt(target, 0, 0, bounds.right, bounds.bottom, dc, 0, 0, SRCCOPY);
+        } catch (const std::exception& e) { logError(e.what()); }
+        SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
     }
     void drawSpectrum(HDC dc, const Spectrum& values, RECT bounds) {
         RECT withLabels = bounds; withLabels.bottom += d(21);
@@ -425,7 +464,6 @@ class Window {
         text(dc, fonts_[0], L"● " + health, rect(220, 133, w - 200, 24), healthColor);
         text(dc, fonts_[1], wide(snapshot_.sourceName), rect(42, 164, w - 36, 20), muted);
         text(dc, fonts_[1], L"Im Player oder in Windows als Ausgabe wählen.", rect(42, 188, w - 36, 20), muted);
-        drawSpectrum(dc, snapshot_.spectrum, rect(40, 210, w - 32, 62));
         text(dc, fonts_[2], L"Kopfhörer · " + std::to_wstring(rows_.size()) + L" von 5", rect(24, 322, w - 150, 30));
         if (rows_.empty()) text(dc, fonts_[0], L"Füge deine in Windows gekoppelten Kopfhörer hinzu.\nAuch USB- und andere Audioausgaben sind möglich.", rect(26, outputTop + 9, w - 4, 65), muted, DT_WORDBREAK | DT_NOPREFIX);
         for (std::size_t i = 0; i < snapshot_.routes.size(); ++i) {
@@ -442,7 +480,6 @@ class Window {
             text(dc, fonts_[1], detail, rect(40, y + 78, w - 32, 20), muted);
             int volume = static_cast<int>(SendMessageW(rows_[i].slider, TBM_GETPOS, 0, 0));
             text(dc, fonts_[0], std::to_wstring(volume) + L" %", rect(width_ - 88, y + 111, 48, 22), muted, DT_RIGHT | DT_SINGLELINE);
-            drawSpectrum(dc, outputSpectrum(snapshot_.spectrum, volume, r.state == RouteState::Playing && !snapshot_.settings.muted && !r.preference.muted), rect(40, y + 146, w - 32, 62));
         }
         text(dc, fonts_[1], L"Lautstärke und Verbindungsstatus werden gespeichert.", rect(26, rowsBottom() + 8, w - 4, 35), muted, DT_WORDBREAK);
         if (!snapshot_.error.empty()) {
@@ -462,6 +499,25 @@ class Window {
         SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
     }
     void drawButton(const DRAWITEMSTRUCT& item) {
+        // WM_DRAWITEM can run synchronously outside WM_PAINT (focus, hover,
+        // enabled state). Parent composition alone does not buffer those draws.
+        // Render background, border, text and focus into one completed image.
+        int width = item.rcItem.right - item.rcItem.left, height = item.rcItem.bottom - item.rcItem.top;
+        if (width <= 0 || height <= 0) return;
+        HDC dc = CreateCompatibleDC(item.hDC);
+        HBITMAP bitmap = CreateCompatibleBitmap(item.hDC, width, height);
+        if (!dc || !bitmap) {
+            if (bitmap) DeleteObject(bitmap);
+            if (dc) DeleteDC(dc);
+            throw std::runtime_error("Schaltflächenpuffer konnte nicht erstellt werden.");
+        }
+        auto old = SelectObject(dc, bitmap);
+        DRAWITEMSTRUCT buffered = item; buffered.hDC = dc; buffered.rcItem = {0, 0, width, height};
+        drawButtonContents(buffered);
+        BitBlt(item.hDC, item.rcItem.left, item.rcItem.top, width, height, dc, 0, 0, SRCCOPY);
+        SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
+    }
+    void drawButtonContents(const DRAWITEMSTRUCT& item) {
         if (item.CtlID >= 200 && item.CtlID < 200 + rows_.size()) {
             const auto& preference = snapshot_.routes[item.CtlID - 200].preference;
             bool silent = preference.muted || snapshot_.settings.muted || preference.volume == 0;
@@ -598,7 +654,7 @@ class Window {
     void scroll(int position) {
         scroll_ = position;
         layout();
-        // Finish a complete composited frame before returning to queued wheel
+        // Finish all buffered surfaces before returning to queued wheel
         // events; WM_PAINT alone can be starved during continuous scrolling.
         // Also flush a pending resize when the requested scroll position is unchanged.
         RedrawWindow(window_, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -607,6 +663,7 @@ class Window {
         switch (message) {
         case WM_CREATE:
             dpi_ = GetDpiForWindow(window_);
+            inputSpectrum_ = spectrumControl(30);
             buttons_[muteId] = button(window_, muteId, L"Mute all");
             buttons_[addId] = button(window_, addId, L"＋ Hinzufügen"); buttons_[setupId] = button(window_, setupId, L"› Einrichtung");
             buttons_[driverId] = button(window_, driverId, L"Treiber installieren …"); buttons_[bluetoothId] = button(window_, bluetoothId, L"Bluetooth-Einstellungen");
@@ -655,7 +712,7 @@ class Window {
             for (std::size_t i = 0; i < rows_.size(); ++i) if (rows_[i].slider == slider) {
                 int y = outputTop + static_cast<int>(i) * outputStep;
                 auto percent = rect(width_ - 88, y + 111, 48, 22);
-                InvalidateRect(window_, &percent, FALSE); invalidateSpectrum(y + 146);
+                InvalidateRect(window_, &percent, FALSE); InvalidateRect(rows_[i].spectrum, nullptr, FALSE);
             }
             return 0;
         }
@@ -677,6 +734,17 @@ class Window {
         return DefWindowProcW(window_, message, wp, lp);
     }
 public:
+    static LRESULT CALLBACK spectrumProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
+        auto* self = reinterpret_cast<Window*>(GetWindowLongPtrW(GetParent(w), GWLP_USERDATA));
+        if (message == WM_ERASEBKGND) return 1;
+        if (self && message == WM_PAINT) {
+            PAINTSTRUCT ps; HDC dc = BeginPaint(w, &ps); self->paintSpectrum(w, dc); EndPaint(w, &ps); return 0;
+        }
+        if (self && (message == WM_PRINTCLIENT || (message == WM_PRINT && (lp & PRF_CLIENT)))) {
+            self->paintSpectrum(w, reinterpret_cast<HDC>(wp)); return 0;
+        }
+        return DefWindowProcW(w, message, wp, lp);
+    }
     explicit Window(bool preview, bool missingDriver = false) : preview_(preview) {
         if (preview) {
             initialized_ = true; expanded_ = true; snapshot_.devicesChecked = true; snapshot_.sourceReady = true; snapshot_.driverInstalled = true; snapshot_.sourceName = "Audio Splitter (VB-Audio Virtual Cable)";
@@ -709,9 +777,9 @@ public:
         int height = std::min(d(preview_ ? 1080 : 850), static_cast<int>(area.bottom - area.top - 40));
         int width = d(660);
         auto title = L"BT Audio Splitter · " + wide(APP_VERSION_TEXT);
-        // Buffer the parent and native child controls as one frame, rather than
-        // showing the card background before its buttons/trackbars have painted.
-        HWND w = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, L"BtAudioSplitterNative", title.c_str(), WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN,
+        // Each surface buffers its own paint, including direct WM_DRAWITEM.
+        // Keep animated child graphs isolated from the static parent/buttons.
+        HWND w = CreateWindowExW(WS_EX_CONTROLPARENT, L"BtAudioSplitterNative", title.c_str(), WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN,
             area.left + (area.right - area.left - width) / 2, area.top + 20, width, height, nullptr, nullptr, appInstance, this);
         if (!w) throw std::runtime_error("Fenster konnte nicht erstellt werden.");
         return w;
@@ -748,7 +816,9 @@ int runUi(HINSTANCE instance, const std::filesystem::path& preview, bool missing
     struct Graphics { ULONG_PTR token; ~Graphics() { Gdiplus::GdiplusShutdown(token); } } graphics{token};
     WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = instance; cls.hCursor = LoadCursor(nullptr, IDC_ARROW);
     cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1)); cls.hIconSm = cls.hIcon; cls.lpfnWndProc = Window::proc; cls.lpszClassName = L"BtAudioSplitterNative";
-    RegisterClassExW(&cls); cls.lpfnWndProc = Modal::proc; cls.lpszClassName = L"AudioSplitterModal"; cls.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1); RegisterClassExW(&cls);
+    RegisterClassExW(&cls);
+    cls.lpfnWndProc = Window::spectrumProc; cls.lpszClassName = L"BtAudioSplitterSpectrum"; RegisterClassExW(&cls);
+    cls.lpfnWndProc = Modal::proc; cls.lpszClassName = L"AudioSplitterModal"; cls.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1); RegisterClassExW(&cls);
     Window window(!preview.empty(), missingDriver); HWND handle = window.create();
     if (!preview.empty()) { window.preview(preview); return 0; }
     ShowWindow(handle, SW_SHOWNORMAL); UpdateWindow(handle);

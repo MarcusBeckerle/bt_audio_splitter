@@ -180,7 +180,7 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.6`
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.7`
 kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
 aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
@@ -191,8 +191,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.6-win-x64.exe
-  BT-Audio-Splitter-0.1.6-win-x64.zip
+  BT-Audio-Splitter-0.1.7-win-x64.exe
+  BT-Audio-Splitter-0.1.7-win-x64.zip
   SHA256SUMS.txt
 ```
 
@@ -259,12 +259,13 @@ mit diesem erweiterten Test reproduziert.
 Seit 0.1.6 prüfen die Tests zusätzlich, dass reine Spektrum-Updates keine
 Buttons oder Regler invalidieren. Scrollbilder werden sofort nach der Bewegung
 verglichen, ohne vorher ein Neuzeichnen zu erzwingen; schnelle Mausradfolgen
-mit fünf Ausgaben und wechselnden Spektren gehören dazu. Das Fenster puffert
-Hintergrund und Bedienelemente gemeinsam, verschiebt sie in einem Durchgang
+mit fünf Ausgaben und wechselnden Spektren gehören dazu. Die Oberfläche puffert
+Hintergrund und jedes Bedienelement separat, verschiebt sie in einem Durchgang
 und berechnet das Layout nur bei einer Geometrieänderung neu. Außerhalb des
 sichtbaren Zeichenbereichs werden keine Spektren gerendert.
 Die zwölf LED-Höhen einschließlich Glow werden pro Größe/Skalierung einmal
 vorberechnet und von allen Anzeigen wiederverwendet.
+Seit 0.1.7 besitzen Spektren eigene Zeichenflächen. Eine zusätzliche echte Windows-Nachrichtenschleife prüft bei wechselnden Balken die unveränderten Button-Pixel nach Zwischenbildern und verlangt null Neuzeichnungen des Hauptfensters und seiner Buttons. Auch der Einrichtungstitel wird separat gepuffert.
 Es liest ausschließlich die Clientfläche dieses Testfensters und speichert keine
 Bildschirmaufnahmen. So werden auch Bildreste erkannt, die in einer statischen
 Vorschau nicht auftreten.

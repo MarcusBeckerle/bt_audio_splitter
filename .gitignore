@@ -4,3 +4,6 @@
 artifacts/
 *.user
 *.log
+*.pfx
+*.p12
+*.key

@@ -1,8 +1,15 @@
 [CmdletBinding()]
-param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release', [switch]$Bootstrap)
+param(
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
+    [switch]$Bootstrap,
+    [string]$Version = ''
+)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '0.1.0'
+if (-not $Version) { $Version = [IO.File]::ReadAllText((Join-Path $root 'VERSION')).Trim() }
+if ($Version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') { throw 'Version must be a numeric major.minor.patch, optionally followed by a prerelease suffix.' }
+$parts = @($Matches[1], $Matches[2], $Matches[3])
+foreach ($part in $parts) { if ([long]$part -gt 65535) { throw 'Windows file-version components must be <= 65535.' } }
 $toolchain = Join-Path $root '.tools/llvm-mingw-20261006-ucrt-x86_64'
 $compiler = Join-Path $toolchain 'bin/clang++.exe'
 # Build tools stay local. End users only need the resulting EXE.
@@ -32,6 +39,8 @@ try {
     if (-not $resolvedPackage.StartsWith([IO.Path]::GetFullPath($out) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe package directory.' }
     if (Test-Path -LiteralPath $resolvedPackage) { Remove-Item -LiteralPath $resolvedPackage -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $out, $release, $package | Out-Null
+    $versionHeader = '#define APP_VERSION_TEXT "' + $Version + '"' + "`n" + '#define APP_VERSION_NUMERIC ' + ($parts -join ',') + ',0' + "`n"
+    [IO.File]::WriteAllText((Join-Path $out 'version.h'), $versionHeader, [Text.UTF8Encoding]::new($false))
     $documents = @('LICENSE', 'NOTICE', 'LICENSING.md', 'COMMERCIAL-LICENSE.md', 'THIRD-PARTY-NOTICES.md')
     $licenses = @(Get-ChildItem (Join-Path $root 'licenses') -File | Sort-Object Name)
     $text = (($documents + @($licenses.FullName)) | ForEach-Object { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $_)) + "`r`n`r`n" }) -join ''
@@ -52,6 +61,7 @@ try {
     Copy-Item -LiteralPath "$out/AudioSplitter.exe" -Destination "$package/AudioSplitter.exe" -Force
     foreach ($file in ($documents + @('README.md', 'CHANGELOG.md'))) { Copy-Item -LiteralPath $file -Destination $package -Force }
     Copy-Item -LiteralPath 'licenses' -Destination $package -Recurse -Force
+    Copy-Item -LiteralPath 'signing' -Destination $package -Recurse -Force
     $name = "BT-Audio-Splitter-$version-win-x64"
     Copy-Item -LiteralPath "$out/AudioSplitter.exe" -Destination "$release/$name.exe" -Force
     Compress-Archive -Path "$package/*" -DestinationPath "$release/$name.zip" -Force

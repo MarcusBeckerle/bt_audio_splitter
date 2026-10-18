@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include "audio.hpp"
 #include "setup.hpp"
+#include "../artifacts/native/version.h"
 #include <commctrl.h>
 #include <gdiplus.h>
 #include <shellapi.h>
@@ -320,7 +321,7 @@ class Window {
         if (!resource) throw std::runtime_error("Lizenzressource fehlt.");
         auto handle = LoadResource(nullptr, resource); auto* bytes = static_cast<const char*>(LockResource(handle));
         std::string license(bytes, SizeofResource(nullptr, resource));
-        Modal modal; modal.body = L"BT Audio Splitter 0.1.0\r\nMarcus Beckerle\r\nhttps://github.com/MarcusBeckerle/bt_audio_splitter\r\n\r\n" + wide(license);
+        Modal modal; modal.body = L"BT Audio Splitter " + wide(APP_VERSION_TEXT) + L"\r\nMarcus Beckerle\r\nhttps://github.com/MarcusBeckerle/bt_audio_splitter\r\n\r\n" + wide(license);
         modal.show(window_, L"Über Audio Splitter · Lizenzen");
     }
     void backgroundTask(bool rename) {

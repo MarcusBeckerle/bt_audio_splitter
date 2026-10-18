@@ -1,0 +1,86 @@
+name: Build and sign release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (for example v0.1.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    if: github.repository == 'MarcusBeckerle/bt_audio_splitter'
+    runs-on: windows-latest
+    outputs:
+      commit: ${{ steps.validate.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        id: validate
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') { throw 'Use a version tag such as v0.1.1.' }
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release commit.' }
+          git merge-base --is-ancestor $commit origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit must already belong to main.' }
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+      - name: Test and build without signing secrets
+        shell: pwsh
+        run: ./build.ps1 -Bootstrap -Version ($env:RELEASE_TAG.Substring(1))
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-release
+          path: artifacts/release/*
+          retention-days: 1
+          if-no-files-found: error
+
+  sign-and-publish:
+    needs: build
+    runs-on: windows-latest
+    environment: release-signing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-release
+          path: artifacts/release
+      - name: Sign, timestamp and verify
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: ./scripts/sign-release.ps1 -Version ($env:RELEASE_TAG.Substring(1))
+      - name: Upload signed release files
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.tagName -ne $env:RELEASE_TAG) { throw 'Requested GitHub release does not exist.' }
+          $files = @(Get-ChildItem -LiteralPath artifacts/release -File | ForEach-Object FullName)
+          gh release upload $env:RELEASE_TAG @files --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }
+          "Signed release files uploaded for $env:RELEASE_TAG. Certificate is self-signed; SmartScreen trust is not implied." >> $env:GITHUB_STEP_SUMMARY

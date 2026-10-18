@@ -1,4 +1,5 @@
 #include "setup.hpp"
+#include "../artifacts/native/version.h"
 #include <winhttp.h>
 #include <bcrypt.h>
 #include <wintrust.h>
@@ -15,7 +16,7 @@ struct Internet {
     Internet(const Internet&) = delete;
 };
 std::string download() {
-    Internet session(WinHttpOpen(L"BT-Audio-Splitter/0.1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    Internet session(WinHttpOpen(wide("BT-Audio-Splitter/" APP_VERSION_TEXT).c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     WinHttpSetTimeouts(session.handle, 15000, 15000, 30000, 30000);
     Internet server(WinHttpConnect(session.handle, L"download.vb-audio.com", INTERNET_DEFAULT_HTTPS_PORT, 0));
     Internet request(WinHttpOpenRequest(server.handle, L"GET", L"/Download_CABLE/VBCABLE_Driver_Pack45.zip", nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));

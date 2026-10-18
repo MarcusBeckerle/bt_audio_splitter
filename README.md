@@ -35,7 +35,9 @@ Treiber muss die verwendeten Kopfhörer unterstützen. Auch USB-/HDMI-Ausgaben
 sind möglich. Der normale Betrieb benötigt weder Administratorrechte noch Internet.
 Nur die Einrichtung lädt einen Treiber herunter und verwendet den in Windows
 enthaltenen ZIP-Entpacker über Windows PowerShell. Es ist nichts nachzuinstallieren.
-Die App selbst ist nicht codesigniert; Windows kann eine SmartScreen-Warnung zeigen.
+GitHub-Releases ab 0.1.1 sind selbstsigniert als **Marcus Beckerle**. Das ist keine
+öffentlich vertrauenswürdige Signatur; Windows kann weiterhin eine SmartScreen-
+Warnung zeigen. Details: [Signierung und Release-Ablauf](signing/README.md).
 
 VB-CABLE kann bei seiner Installation Windows-Standardgeräte ändern, auch die
 Kommunikationseingabe. Danach die Windows-Einstellungen überprüfen. Die App
@@ -130,8 +132,9 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Versionsnummern für eine neue Veröffentlichung in `build.ps1`, `native/app.rc`,
-`native/ui.cpp` und `native/setup.cpp` konsistent aktualisieren.
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.2`
+kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
+aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
 Das Skript behandelt Compilerwarnungen als Fehler, führt die Tests aus und
 prüft die importierten DLLs auf unerwünschte Compilerlaufzeiten. C++-Hilfsroutinen
@@ -140,13 +143,18 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.0-win-x64.exe
-  BT-Audio-Splitter-0.1.0-win-x64.zip
+  BT-Audio-Splitter-0.1.1-win-x64.exe
+  BT-Audio-Splitter-0.1.1-win-x64.zip
   SHA256SUMS.txt
 ```
 
 Nur diese Dateien weitergeben. `.tools` und `artifacts/native` sind Build-Dateien.
 GitHub Actions führt denselben Build samt Tests auf `windows-latest` aus.
+Beim Veröffentlichen eines Releases mit Tag `vX.Y.Z` baut der separate Workflow
+**Build and sign release** den Tag, signiert mit den geschützten Environment-
+Secrets und lädt EXE, ZIP, öffentliche CER und Prüfsummen an das Release.
+Das ZIP enthält ebenfalls die signierte EXE. Ein Entwurf startet noch keinen Build.
+Der private Schlüssel wird nicht bei normalen Push-/PR-Builds bereitgestellt.
 
 ## Aufbau und Stabilität
 
@@ -206,7 +214,7 @@ absichtlich ungültige Geräte-ID und wiederholten Neuaufbau einer Ausgabe.
 Er spielt ausschließlich Stille, verändert keine Windows-Lautstärke und
 speichert keine Audiodaten. Er ist **kein Test mit fünf Bluetooth-Kopfhörern**.
 
-**Version 0.1.0 ist eine Vorabversion.** Automatisierte Tests, UI-Vorschau und
+**Version 0.1.x ist eine Vorabversion.** Automatisierte Tests, UI-Vorschau und
 nativer Audiotest sind bestanden. Noch offen: echte Bluetooth-Hardwareabnahme
 und Treiberinstallation/-entfernung auf dem Zielrechner. Abnahmeschritte:
 

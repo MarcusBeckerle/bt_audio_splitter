@@ -13,13 +13,14 @@ $publicFile = Join-Path $root 'signing/Marcus-Beckerle.cer'
 $expected = [Security.Cryptography.X509Certificates.X509Certificate2]::new($publicFile)
 $thumbprint = $expected.Thumbprint
 $myPath = "Cert:\CurrentUser\My\$thumbprint"
-$trustPath = "Cert:\CurrentUser\Root\$thumbprint"
+$trustPath = "Cert:\LocalMachine\Root\$thumbprint"
 if (Test-Path -LiteralPath $myPath) { throw 'Runner already contains the signing identity; refusing ambiguous cleanup.' }
 if (Test-Path -LiteralPath $trustPath) { throw 'Runner already trusts this certificate; refusing ambiguous cleanup.' }
 $temporary = Join-Path $env:RUNNER_TEMP ('audio-splitter-signing-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 $pfxPath = Join-Path $temporary 'signing.pfx'
 try {
+    Write-Host 'Importing the release identity into the disposable runner.'
     $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX)
     [IO.File]::WriteAllBytes($pfxPath, $pfxBytes); [Array]::Clear($pfxBytes, 0, $pfxBytes.Length)
     $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_PASSWORD -AsPlainText -Force
@@ -33,17 +34,23 @@ try {
     $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
     $signTool = Get-ChildItem -Path "$sdk/*/x64/signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
     if (-not $signTool) { throw 'Windows SDK SignTool is missing.' }
+    Write-Host 'Signing and requesting the RFC 3161 timestamp.'
     & $signTool.FullName sign /sha1 $thumbprint /s My /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
     if ($LASTEXITCODE -ne 0) { throw 'Authenticode signing or RFC 3161 timestamping failed.' }
 
     # Trust only this exact self-signed identity, only on the disposable runner, for verification.
     # No trust-store changes are performed on a developer's or end user's computer.
-    Import-Certificate -FilePath $publicFile -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+    # CurrentUser/Root can open an interactive trust dialog and hang unattended CI.
+    # The elevated hosted runner uses its machine store; this exact entry is removed below.
+    Write-Host 'Temporarily trusting the pinned public certificate on the disposable runner.'
+    Import-Certificate -FilePath $publicFile -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    Write-Host 'Verifying the signature, publisher and timestamp.'
     & $signTool.FullName verify /pa /all /v $exe
     if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed.' }
     $signature = Get-AuthenticodeSignature -LiteralPath $exe
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $thumbprint -or -not $signature.TimeStamperCertificate) { throw 'Signature identity, integrity or timestamp validation failed.' }
 
+    Write-Host 'Packaging the verified signed executable.'
     $package = Join-Path $temporary 'package'
     Expand-Archive -LiteralPath $zip -DestinationPath $package
     Copy-Item -LiteralPath $exe -Destination (Join-Path $package 'AudioSplitter.exe') -Force

@@ -35,7 +35,7 @@ Treiber muss die verwendeten Kopfhörer unterstützen. Auch USB-/HDMI-Ausgaben
 sind möglich. Der normale Betrieb benötigt weder Administratorrechte noch Internet.
 Nur die Einrichtung lädt einen Treiber herunter und verwendet den in Windows
 enthaltenen ZIP-Entpacker über Windows PowerShell. Es ist nichts nachzuinstallieren.
-GitHub-Releases ab 0.1.1 sind selbstsigniert als **Marcus Beckerle**. Das ist keine
+GitHub-Releases ab 0.1.2 sind selbstsigniert als **Marcus Beckerle**. Das ist keine
 öffentlich vertrauenswürdige Signatur; Windows kann weiterhin eine SmartScreen-
 Warnung zeigen. Details: [Signierung und Release-Ablauf](signing/README.md).
 
@@ -143,8 +143,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.1-win-x64.exe
-  BT-Audio-Splitter-0.1.1-win-x64.zip
+  BT-Audio-Splitter-0.1.2-win-x64.exe
+  BT-Audio-Splitter-0.1.2-win-x64.zip
   SHA256SUMS.txt
 ```
 

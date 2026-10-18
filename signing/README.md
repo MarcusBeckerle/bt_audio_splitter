@@ -1,6 +1,6 @@
 # Selbstsignierte Windows-Releases
 
-Die GitHub-Releases ab 0.1.1 werden mit einer Authenticode-Signatur für
+Die GitHub-Releases ab 0.1.2 werden mit einer Authenticode-Signatur für
 **Marcus Beckerle** und einem RFC-3161-Zeitstempel versehen. Das Zertifikat ist
 **selbstsigniert**: Es bestätigt keine durch eine öffentliche Zertifizierungsstelle
 geprüfte Identität und beseitigt keine SmartScreen-Warnung auf fremden Rechnern.
@@ -59,7 +59,8 @@ bleiben unsigniert; sie erhalten keinen Zugriff auf die Signiergeheimnisse.
 - Der Signierschritt prüft den Schlüssel gegen das eingecheckte öffentliche
   Zertifikat und importiert ihn nicht exportierbar auf dem kurzlebigen Runner.
 - Nur zur Signaturprüfung vertraut dieser Runner vorübergehend genau diesem
-  Zertifikat. Der Schritt entfernt anschließend Schlüssel, temporäre Vertrauens-
+  Zertifikat in `LocalMachine/Root`, damit kein interaktiver Benutzerdialog
+  den CI-Lauf blockiert. Der Schritt entfernt anschließend Schlüssel, temporäre Vertrauens-
   eintragung und PFX-Datei. Entwickler- und Endnutzer-Vertrauensspeicher werden
   nicht verändert.
 - GitHub-Administratoren bzw. Personen, die berechtigte Workflows ändern können,

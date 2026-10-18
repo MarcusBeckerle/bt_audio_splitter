@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — 2026-10-18 — Prerelease
+
+- Fix unattended signature verification: temporarily trust the pinned certificate
+  in the disposable runner's machine store to avoid a CurrentUser trust dialog.
+- Add signing progress messages and bounded job/step timeouts.
+- Update GitHub Actions to current releases, pinned to exact commits.
+- First fully verified signed release; 0.1.1 stopped during runner trust setup
+  and did not publish downloadable binaries.
+
 ## 0.1.1 — 2026-10-18 — Prerelease
 
 - Self-signed Authenticode releases for Marcus Beckerle, with RFC 3161 timestamps.

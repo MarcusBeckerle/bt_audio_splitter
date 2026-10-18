@@ -119,6 +119,18 @@ int main() {
         require(volumeGain(10) < .002f && volumeGain(50) < .04f);
         for (int i = 1; i <= 100; ++i) require(volumeGain(i) > volumeGain(i - 1));
     });
+    test("Low-latency periods respect driver bounds, granularity and the 5-ms floor", [] {
+        require(lowLatencyPeriod(48000, 48, 144, 480) == 240);
+        require(lowLatencyPeriod(44100, 4, 48, 448) == 224);
+        require(lowLatencyPeriod(48000, 48, 384, 480) == 384);
+        for (unsigned rate : {44100u, 48000u, 96000u}) for (unsigned step : {1u, 4u, 48u, 128u}) {
+            unsigned period = lowLatencyPeriod(rate, step, step, rate / 50);
+            require(period % step == 0 && period >= step && period <= rate / 50 && period * 200 >= rate);
+        }
+        require(!lowLatencyPeriod(48000, 0, 144, 480));
+        require(!lowLatencyPeriod(48000, 128, 512, 480));
+        require(!lowLatencyPeriod(48000, 128, 128, 200));
+    });
     test("Master mute persists without changing individual volume, pause or delay", [] {
         Settings settings{"cable", {{"a", "One", 35, true, 120}, {"b", "Two", 80, false, 0}}};
         settings.muted = true;

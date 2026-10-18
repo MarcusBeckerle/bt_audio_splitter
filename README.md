@@ -119,9 +119,15 @@ der neuen Kennlinie leiser. Windows-/Player-/Gerätelautstärke wirken zusätzli
   Über **⋯ → Zeitabgleich** lässt sich die schnellere Ausgabe manuell an die
   langsamere anpassen. Das entfernt keine Bluetooth-Transportlatenz und muss
   nach einem Geräte-/Codecwechsel eventuell erneut eingestellt werden.
-- Pro Ausgabe: eigener ereignisgesteuerter Audiothread, maximal 40-ms-Live-Queue,
-  WASAPI-Puffer von angeforderten 20 ms statt vorher 80 ms. Windows kann einen
-  größeren Mindestpuffer benötigen. Capture nutzt ebenfalls Audioereignisse;
+- Pro Ausgabe: eigener ereignisgesteuerter Audiothread, maximal 40-ms-Live-Queue.
+  Bei exakt passendem Stereo-Float-Format wird der Windows-Low-Latency-Pfad
+  (`IAudioClient3`) mit einer treiberkonformen Periode ab 5 ms versucht.
+  Bei anderem Format oder fehlender Unterstützung bleibt die hochwertige
+  Windows-Formatumwandlung aktiv: Mindestpuffer anfordern, bei Ablehnung auf
+  die bisherige 20-ms-Anforderung zurückfallen. Die tatsächlichen Puffergrößen
+  bestimmt Windows; eine Verringerung ist nicht auf jedem Gerät möglich.
+  Hintergrund: [Microsoft: Low Latency Audio](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/low-latency-audio).
+  Capture nutzt ebenfalls Audioereignisse;
   der manuell eingestellte Zeitabgleich kommt zusätzlich hinzu.
   Bei Überlauf werden alte vollständige Frames verworfen;
   bei Unterlauf wird Stille ausgegeben. Die Verzögerung wächst dadurch nicht
@@ -174,7 +180,7 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.5`
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.6`
 kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
 aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
@@ -185,8 +191,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.5-win-x64.exe
-  BT-Audio-Splitter-0.1.5-win-x64.zip
+  BT-Audio-Splitter-0.1.6-win-x64.exe
+  BT-Audio-Splitter-0.1.6-win-x64.zip
   SHA256SUMS.txt
 ```
 
@@ -234,13 +240,13 @@ und die statisch eingebundenen C++-/MinGW-Hilfsroutinen.
 
 ## Tests und Abnahme
 
-`build.ps1` führt 25 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
+`build.ps1` führt 26 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
 Pause, dauerhafte Entfernung, fünf Geräte, IDs/Unicode/Lautstärken, defekte
 Einstellungen, Pufferverhalten gegen ein Zufalls-Referenzmodell, getrennte
 Verteilung, parallele Zugriffe und atomare Dateiersetzung, logarithmische Pegel,
 Master-Mute, Verzögerung, Migration alter Einstellungen und Spektrumsanalyse.
 
-`build.ps1 -UiTests` ergänzt 522 Grafikprüfungen auf einem Windows-Desktop;
+`build.ps1 -UiTests` ergänzt 630 Grafikprüfungen auf einem Windows-Desktop;
 GitHub-CI und Release-Builds führen sie ebenfalls aus. Das separate Testprogramm
 zeigt kurz ein eigenes Fenster mit Beispieldaten, ohne Audiogeräte oder
 Benutzereinstellungen anzufassen. Es vergleicht dessen sichtbare Pixel nach
@@ -250,6 +256,15 @@ Test und App verwenden dasselbe Common-Controls-v6-Manifest. Echtes Ziehen der
 Regler bei gleichzeitigem Timer-Refresh und wechselndem Spektrum sowie
 Master-Mute/Unmute sind enthalten. Der Reglerfehler wurde vor der Korrektur
 mit diesem erweiterten Test reproduziert.
+Seit 0.1.6 prüfen die Tests zusätzlich, dass reine Spektrum-Updates keine
+Buttons oder Regler invalidieren. Scrollbilder werden sofort nach der Bewegung
+verglichen, ohne vorher ein Neuzeichnen zu erzwingen; schnelle Mausradfolgen
+mit fünf Ausgaben und wechselnden Spektren gehören dazu. Das Fenster puffert
+Hintergrund und Bedienelemente gemeinsam, verschiebt sie in einem Durchgang
+und berechnet das Layout nur bei einer Geometrieänderung neu. Außerhalb des
+sichtbaren Zeichenbereichs werden keine Spektren gerendert.
+Die zwölf LED-Höhen einschließlich Glow werden pro Größe/Skalierung einmal
+vorberechnet und von allen Anzeigen wiederverwendet.
 Es liest ausschließlich die Clientfläche dieses Testfensters und speichert keine
 Bildschirmaufnahmen. So werden auch Bildreste erkannt, die in einer statischen
 Vorschau nicht auftreten.

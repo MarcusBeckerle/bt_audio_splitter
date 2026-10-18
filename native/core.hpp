@@ -11,6 +11,14 @@
 namespace splitter {
 constexpr std::size_t maxOutputs = 5;
 constexpr int maxOutputDelayMs = 1000;
+// Respect driver granularity and keep a 5-ms scheduling floor instead of
+// forcing the absolute minimum (which can be too costly with five outputs).
+inline unsigned lowLatencyPeriod(unsigned rate, unsigned fundamental, unsigned minimum, unsigned maximum) {
+    if (!rate || !fundamental || !minimum || minimum > maximum) return 0;
+    auto target = std::max((static_cast<unsigned long long>(rate) + 199) / 200, static_cast<unsigned long long>(minimum));
+    auto aligned = ((target + fundamental - 1) / fundamental) * fundamental;
+    return aligned <= maximum ? static_cast<unsigned>(aligned) : 0;
+}
 // A percentage controls attenuation in dB, not linear amplitude. Keep an exact
 // unity endpoint and digital silence at zero; the quiet range stays usable.
 inline float volumeGain(int percent) {

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.6 — 2026-10-18 — Prerelease
+
+- Fix flicker across sliders, pause/menu buttons and setup: compose the parent
+  and child controls together, batch their positions and finish each scroll frame.
+- Spectrum ticks invalidate only their graph regions. Unchanged controls and
+  layouts are left alone; off-screen spectra are skipped during painting.
+- Cache the twelve glowing LED-column shapes once per size/DPI change and reuse
+  them across all six graphs, avoiding repeated gradient rendering while scrolling.
+- Extend regression checks to immediate scroll frames, all controls during idle
+  and meter updates, and wheel bursts with five active spectra.
+- Try IAudioClient3 with a driver-aligned period of at least 5 ms when the device
+  mix format exactly matches stereo float input. Retain high-quality resampling
+  and legacy minimum-buffer/20-ms fallback for other formats and drivers.
+- Audio self-test reports actual output buffer sizes and engine period. Smaller
+  buffers depend on the driver; this does not remove Bluetooth transport latency.
+
 ## 0.1.5 — 2026-10-18 — Prerelease
 
 - Floating spectrum LEDs with a subtle glow and a smooth green/yellow/orange/red

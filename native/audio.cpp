@@ -110,16 +110,52 @@ class Sink {
     Com<IAudioClient> client_;
     Com<IAudioRenderClient> render_;
     UINT32 bufferFrames_ = 0;
+    DWORD rate_ = 0;
+    bool lowLatency_ = false;
+    UINT32 periodFrames_ = 0;
     std::shared_ptr<AudioPipe> pipe_;
+    bool initializeLowLatency(DWORD rate) {
+        Com<IAudioClient3> modern;
+        if (FAILED(client_->QueryInterface(__uuidof(IAudioClient3), reinterpret_cast<void**>(modern.put())))) return false;
+        WAVEFORMATEX* raw = nullptr;
+        if (FAILED(client_->GetMixFormat(&raw))) return false;
+        std::unique_ptr<WAVEFORMATEX, CoMemory> mix(raw);
+        bool floating = raw->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+            (raw->wFormatTag == WAVE_FORMAT_EXTENSIBLE && raw->cbSize >= 22 &&
+                IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(raw)->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT));
+        // IAudioClient3 does not support AUTOCONVERTPCM. Only use its direct path
+        // when our stereo float samples already exactly match the device mix.
+        if (!floating || raw->nChannels != 2 || raw->nSamplesPerSec != rate || raw->wBitsPerSample != 32 || raw->nBlockAlign != 8) return false;
+        UINT32 normal = 0, fundamental = 0, minimum = 0, maximum = 0;
+        if (FAILED(modern->GetSharedModeEnginePeriod(raw, &normal, &fundamental, &minimum, &maximum))) return false;
+        UINT32 period = lowLatencyPeriod(rate, fundamental, minimum, maximum);
+        if (!period || period > normal || FAILED(modern->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, raw, nullptr))) return false;
+        periodFrames_ = period; return true;
+    }
 public:
-    Sink(const std::string& id, DWORD rate, int volume, std::shared_ptr<AudioPipe> pipe = {}) : pipe_(pipe ? std::move(pipe) : std::make_shared<AudioPipe>(rate * 40 / 1000, volume)) {
+    Sink(const std::string& id, DWORD rate, int volume, std::shared_ptr<AudioPipe> pipe = {}, REFERENCE_TIME duration = 0) : rate_(rate), pipe_(pipe ? std::move(pipe) : std::make_shared<AudioPipe>(rate * 40 / 1000, volume)) {
         auto d = device(id); client_ = client(d.get());
         auto format = floatFormat(rate);
         // Windows negotiates each device independently; its high-quality shared-mode resampler
         // handles differing sample rates. No microphone/communications stream is ever opened.
-        check(client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            200000, 0, &format, nullptr), "Stereo-Ausgabe öffnen");
+        constexpr DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY |
+            AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+        // Zero requests Windows' minimum shared-mode buffer for this device.
+        // Retain the high-quality resampler and fall back to the previous 20-ms
+        // request on drivers that reject the minimum. A fresh client is required
+        // after a failed initialization attempt.
+        lowLatency_ = duration == 0 && initializeLowLatency(rate);
+        HRESULT initialized = S_OK;
+        if (!lowLatency_) {
+            // Discard any partial IAudioClient3 initialization before fallback.
+            client_ = client(d.get());
+            initialized = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, duration, 0, &format, nullptr);
+            if (FAILED(initialized) && duration == 0) {
+                client_ = client(d.get());
+                initialized = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200000, 0, &format, nullptr);
+            }
+        }
+        check(initialized, "Stereo-Ausgabe öffnen");
         if (!event_.get()) throw std::runtime_error("Audio-Ereignis konnte nicht erstellt werden.");
         check(client_->SetEventHandle(event_.get()), "Audioausgangs-Ereignis setzen");
         check(client_->GetBufferSize(&bufferFrames_), "Ausgangspuffer lesen");
@@ -131,6 +167,9 @@ public:
         check(client_->Start(), "Audioausgabe aktivieren");
     }
     ~Sink() { if (client_) client_->Stop(); }
+    double bufferMs() const { return 1000.0 * bufferFrames_ / rate_; }
+    bool lowLatency() const { return lowLatency_; }
+    double periodMs() const { return 1000.0 * periodFrames_ / rate_; }
     void wait() { if (WaitForSingleObject(event_.get(), 20) == WAIT_FAILED) throw std::runtime_error("Audioausgangs-Ereignis fehlgeschlagen."); }
     void volume(int volume) { pipe_->volume = volume; }
     void write(const float* samples, UINT32 frames) { pipe_->push(samples, frames); }
@@ -387,6 +426,7 @@ void audioSelfTest(const std::filesystem::path& report) {
     auto it = std::find_if(devices.begin(), devices.end(), [](const auto& d) { return d.available && !d.handsFree && !d.cable; });
     if (it == devices.end()) throw std::runtime_error("Kein aktives Audiogerät für den Selbsttest.");
     Source input(it->id);
+    Sink previousBuffer(it->id, input.rate(), 0, {}, 200000);
     Sink first(it->id, input.rate(), 0), second(it->id, input.rate() == 48000 ? 44100 : 48000, 0);
     std::vector<float> silence(19200, 0); std::size_t captured = 0;
     auto until = Clock::now() + std::chrono::seconds(2);
@@ -394,7 +434,7 @@ void audioSelfTest(const std::filesystem::path& report) {
         input.pump([&](const float*, UINT32 frames) { captured += frames; });
         // This explicit self-test only submits silence; captured user audio is never replayed or stored.
         first.write(silence.data(), 240); second.write(silence.data(), 240);
-        first.pump(); second.pump(); Sleep(5);
+        first.pump(); second.pump(); previousBuffer.pump(); Sleep(5);
     }
     if (!captured) throw std::runtime_error("Loopback-Selbsttest lieferte keine Frames.");
     auto bus = std::make_shared<AudioBus>();
@@ -415,6 +455,12 @@ void audioSelfTest(const std::filesystem::path& report) {
     }
     if (!failureIsolated || !capture.rate() || std::any_of(outputs.begin(), outputs.end(), [](const auto& o) { return !o->ready(); }))
         throw std::runtime_error("Thread-/Ausfalltest fehlgeschlagen.");
-    atomicWrite(report, "PASS: Native WASAPI loopback, sample-rate conversion, five independent output threads, failed endpoint isolation and output recreation.\nCaptured frames (not stored): " + std::to_string(captured) + "\n");
+    atomicWrite(report, "PASS: Native WASAPI loopback, sample-rate conversion, five independent output threads, failed endpoint isolation and output recreation.\nCaptured frames (not stored): " + std::to_string(captured) +
+        "\nOutput buffer with minimum request (ms): " + std::to_string(first.bufferMs()) +
+        "\nOutput buffer with previous 20-ms request (ms): " + std::to_string(previousBuffer.bufferMs()) +
+        "\nIAudioClient3 direct path active: " + std::to_string(first.lowLatency()) +
+        "\nDirect path engine period (ms, 0 for compatibility path): " + std::to_string(first.periodMs()) +
+        "\nDifferent-rate conversion uses compatibility path: " + std::to_string(!second.lowLatency()) +
+        "\nThese are WASAPI buffer sizes, not measured end-to-end or Bluetooth latency.\n");
 }
 } // namespace splitter

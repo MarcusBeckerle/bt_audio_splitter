@@ -9,6 +9,7 @@
 #include <atomic>
 #include <array>
 #include <optional>
+#include <tuple>
 
 namespace splitter {
 namespace {
@@ -188,6 +189,13 @@ class Window {
     std::thread setupThread_;
     std::mutex setupMutex_;
     std::wstring setupMessage_;
+    struct Placement { HWND control; RECT bounds; UINT flags; };
+    std::vector<Placement> placements_;
+    std::optional<std::tuple<int, int, int, int, UINT>> layoutState_;
+    std::string paintedState_;
+    Spectrum paintedSpectrum_{};
+    std::unique_ptr<Gdiplus::Bitmap> spectrumAtlas_;
+    std::tuple<int, int, UINT> spectrumAtlasKey_{};
     int d(int value) const { return MulDiv(value, dpi_, 96); }
     RECT rect(int x, int y, int w, int h) const { return {d(x), d(y) - scroll_, d(x + w), d(y + h) - scroll_}; }
     void place(HWND control, int x, int y, int w, int h, bool visible = true) {
@@ -195,11 +203,8 @@ class Window {
         RECT previous{}; GetWindowRect(control, &previous);
         MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&previous), 2);
         if (EqualRect(&r, &previous) && static_cast<bool>(GetWindowLongW(control, GWL_STYLE) & WS_VISIBLE) == visible) return;
-        // Scrolling moves controls across each other's old bounds. Do not copy
-        // their previous pixels or paint intermediate positions. layout() redraws
-        // the complete parent/child tree once every control has its final bounds.
-        SetWindowPos(control, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+        placements_.push_back({control, r, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW |
+            static_cast<UINT>(visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW)});
     }
     void fonts() {
         for (auto f : fonts_) if (f) DeleteObject(f);
@@ -220,13 +225,17 @@ class Window {
         return {L"Bereit", green};
     }
     int setupTop() const { return rowsBottom() + 56 + (snapshot_.error.empty() ? 0 : 64); }
-    void layout() {
+    bool layout(bool force = false) {
         RECT client; GetClientRect(window_, &client); width_ = MulDiv(client.right, 96, dpi_);
         int right = width_ - 24;
         contentHeight_ = d(setupTop() + (expanded_ ? 276 : 60) + 65);
         SCROLLINFO info{}; info.cbSize = sizeof(info); info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
         info.nMin = 0; info.nMax = contentHeight_ - 1; info.nPage = static_cast<UINT>(client.bottom);
         scroll_ = std::clamp(scroll_, 0, std::max(0, contentHeight_ - static_cast<int>(client.bottom))); info.nPos = scroll_;
+        auto state = std::make_tuple(width_, static_cast<int>(client.bottom), contentHeight_, scroll_, dpi_);
+        if (!force && layoutState_ == state) return false;
+        layoutState_ = state;
+        placements_.clear();
         SetScrollInfo(window_, SB_VERT, &info, TRUE);
         place(buttons_[muteId], right - 160, 24, 160, 42);
         place(buttons_[addId], right - 142, 318, 142, 36);
@@ -245,9 +254,35 @@ class Window {
         place(buttons_[sourceId], 387, y + 130, right - 403, 34, expanded_);
         place(buttons_[vendorId], 40, y + 236, width_ - 80, 28, expanded_);
         place(buttons_[aboutId], 65, y + (expanded_ ? 290 : 72), width_ - 130, 30);
-        // WS_CLIPCHILDREN excludes controls from the parent's buffered paint;
-        // invalidating only the parent leaves stale pixels inside moved controls.
+        // Move the entire child tree together. No intermediate position is painted.
+        HDWP batch = BeginDeferWindowPos(static_cast<int>(placements_.size()));
+        for (const auto& p : placements_) {
+            if (!batch) break;
+            batch = DeferWindowPos(batch, p.control, nullptr, p.bounds.left, p.bounds.top,
+                p.bounds.right - p.bounds.left, p.bounds.bottom - p.bounds.top, p.flags);
+        }
+        if (!batch || !EndDeferWindowPos(batch)) {
+            // Resource-pressure fallback still defers painting until all moves finish.
+            for (const auto& p : placements_) SetWindowPos(p.control, nullptr, p.bounds.left, p.bounds.top,
+                p.bounds.right - p.bounds.left, p.bounds.bottom - p.bounds.top, p.flags);
+        }
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        return true;
+    }
+    std::string uiState() {
+        // Spectrum samples deliberately do not belong to static UI state.
+        Settings visible; visible.source = snapshot_.sourceName; visible.muted = snapshot_.settings.muted;
+        for (const auto& route : snapshot_.routes) visible.outputs.push_back(route.preference);
+        std::ostringstream key;
+        key << serialize(visible) << std::quoted(snapshot_.error) << busy_.load() << expanded_
+            << snapshot_.devicesChecked << snapshot_.driverInstalled << snapshot_.sourceReady << snapshot_.suspended;
+        for (const auto& route : snapshot_.routes) key << static_cast<int>(route.state) << std::quoted(route.error);
+        { std::lock_guard lock(setupMutex_); key << std::quoted(utf8(setupMessage_)); }
+        return key.str();
+    }
+    void invalidateSpectrum(int y) {
+        auto bounds = rect(40, y, width_ - 80, 62);
+        InvalidateRect(window_, &bounds, FALSE);
     }
     void update() {
         if (audio_) snapshot_ = audio_->snapshot();
@@ -280,9 +315,10 @@ class Window {
             setText(rows_[i].toggle, preference.enabled ? L"Pausieren" : L"Verbinden");
             setText(rows_[i].mute, (preference.muted ? L"Stummschaltung aufheben: " : L"Ausgabe stummschalten: ") + wide(preference.name));
             // Do not overwrite a slider while it owns focus/capture; the worker may be one snapshot behind.
-            if (GetFocus() != rows_[i].slider && GetCapture() != rows_[i].slider)
+            if (GetFocus() != rows_[i].slider && GetCapture() != rows_[i].slider &&
+                SendMessageW(rows_[i].slider, TBM_GETPOS, 0, 0) != preference.volume)
                 SendMessageW(rows_[i].slider, TBM_SETPOS, TRUE, preference.volume);
-            SetWindowTextW(rows_[i].slider, (L"Lautstärke " + wide(preference.name)).c_str());
+            setText(rows_[i].slider, L"Lautstärke " + wide(preference.name));
         }
         EnableWindow(buttons_[addId], rows_.size() < maxOutputs && !busy_);
         for (int id : {driverId, renameId, sourceId}) EnableWindow(buttons_[id], !busy_ && (id == driverId || snapshot_.sourceReady || id == sourceId));
@@ -290,12 +326,26 @@ class Window {
         setText(buttons_[driverId], installed ? L"Treiber entfernen …" : L"Treiber installieren …");
         setText(buttons_[setupId], expanded_ ? L"⌄  Einrichtung" : L"›  Einrichtung");
         setText(buttons_[muteId], snapshot_.settings.muted ? L"Unmute all" : L"Mute all");
-        layout();
+        bool moved = layout(changed);
+        auto state = uiState();
+        if (state != paintedState_) {
+            paintedState_ = std::move(state);
+            InvalidateRect(window_, nullptr, FALSE);
+            // Mute colors/icons can change without a change in button text.
+            for (const auto& row : rows_) InvalidateRect(row.mute, nullptr, FALSE);
+        } else if (!moved && paintedSpectrum_ != snapshot_.spectrum) {
+            invalidateSpectrum(210);
+            for (std::size_t i = 0; i < rows_.size(); ++i) invalidateSpectrum(outputTop + static_cast<int>(i) * outputStep + 146);
+        }
+        paintedSpectrum_ = snapshot_.spectrum;
     }
     void drawSpectrum(HDC dc, const Spectrum& values, RECT bounds) {
+        RECT withLabels = bounds; withLabels.bottom += d(21);
+        if (!RectVisible(dc, &withLabels)) return;
         Gdiplus::Graphics graphics(dc);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        graphics.SetClip(Gdiplus::Rect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top));
+        auto clip = graphics.Save();
+        graphics.SetClip(Gdiplus::Rect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top), Gdiplus::CombineModeIntersect);
         const float left = static_cast<float>(bounds.left + d(5)), top = static_cast<float>(bounds.top + d(4));
         const float width = static_cast<float>(bounds.right - bounds.left - d(10));
         const float height = static_cast<float>(bounds.bottom - bounds.top - d(8));
@@ -311,32 +361,47 @@ class Window {
             auto channel = [&](int c) { return static_cast<BYTE>(palette[index][c] * (1 - mix) + palette[index + 1][c] * mix); };
             return Gdiplus::Color(alpha, channel(0), channel(1), channel(2));
         };
+        const int tileWidth = static_cast<int>(std::ceil(column)) + d(12), tileHeight = bounds.bottom - bounds.top;
+        auto atlasKey = std::make_tuple(static_cast<int>(width), tileHeight, dpi_);
+        if (!spectrumAtlas_ || spectrumAtlasKey_ != atlasKey) {
+            // All 48 bands and all outputs share the same 12 LED shapes. Render
+            // their alpha/glow once per size/DPI change, not on each scroll frame.
+            auto atlas = std::make_unique<Gdiplus::Bitmap>(tileWidth * segments, tileHeight, PixelFormat32bppPARGB);
+            if (atlas->GetLastStatus() != Gdiplus::Ok) throw std::runtime_error("Spektrumpuffer konnte nicht erstellt werden.");
+            Gdiplus::Graphics tiles(atlas.get()); tiles.Clear(Gdiplus::Color(0, 0, 0, 0));
+            tiles.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            for (int lit = 1; lit <= segments; ++lit) {
+                float center = tileWidth * (lit - .5f);
+                float bottom = static_cast<float>(d(4)) + height - step * .5f, peak = bottom - step * (lit - 1);
+                for (int layer = 3; layer >= 1; --layer) {
+                    Gdiplus::LinearGradientBrush glow(Gdiplus::PointF(center, bottom + step), Gdiplus::PointF(center, peak - step),
+                        colorAt(0, 9), colorAt(static_cast<float>(lit - 1) / (segments - 1), 13));
+                    Gdiplus::Pen halo(&glow, column - d(3) + d(layer * 2));
+                    halo.SetStartCap(Gdiplus::LineCapRound); halo.SetEndCap(Gdiplus::LineCapRound);
+                    tiles.DrawLine(&halo, center, bottom, center, peak - .1f);
+                }
+                for (int segment = 0; segment < lit; ++segment) {
+                    float y = bottom - step * segment;
+                    Gdiplus::Pen led(colorAt(static_cast<float>(segment) / (segments - 1), 255), std::max(1.0f, step - d(1)));
+                    led.SetStartCap(Gdiplus::LineCapRound); led.SetEndCap(Gdiplus::LineCapRound);
+                    float half = std::max(.5f, (column - d(4) - step + d(1)) * .5f);
+                    tiles.DrawLine(&led, center - half, y, center + half, y);
+                }
+            }
+            spectrumAtlas_ = std::move(atlas); spectrumAtlasKey_ = atlasKey;
+        }
         for (std::size_t band = 0; band < spectrumBands; ++band) {
             int lit = static_cast<int>(std::ceil(std::clamp(values[band], 0.0f, 1.0f) * segments));
             if (!lit) continue;
-            float center = left + column * (band + .5f);
-            float bottom = top + height - step * .5f, peak = bottom - step * (lit - 1);
-            // Three translucent rounded layers form a small halo without a
-            // blur bitmap/allocation for every bar on every 100-ms refresh.
-            for (int layer = 3; layer >= 1; --layer) {
-                Gdiplus::LinearGradientBrush glow(Gdiplus::PointF(center, bottom + step), Gdiplus::PointF(center, peak - step),
-                    colorAt(0, 9), colorAt(static_cast<float>(lit - 1) / (segments - 1), 13));
-                Gdiplus::Pen halo(&glow, column - d(3) + d(layer * 2));
-                halo.SetStartCap(Gdiplus::LineCapRound); halo.SetEndCap(Gdiplus::LineCapRound);
-                graphics.DrawLine(&halo, center, bottom, center, peak - .1f);
-            }
-            for (int segment = 0; segment < lit; ++segment) {
-                float y = bottom - step * segment;
-                Gdiplus::Pen led(colorAt(static_cast<float>(segment) / (segments - 1), 255), std::max(1.0f, step - d(1)));
-                led.SetStartCap(Gdiplus::LineCapRound); led.SetEndCap(Gdiplus::LineCapRound);
-                float half = std::max(.5f, (column - d(4) - step + d(1)) * .5f);
-                graphics.DrawLine(&led, center - half, y, center + half, y);
-            }
+            Gdiplus::RectF target(left + column * (band + .5f) - tileWidth * .5f,
+                static_cast<float>(bounds.top), static_cast<float>(tileWidth), static_cast<float>(tileHeight));
+            graphics.DrawImage(spectrumAtlas_.get(), target, static_cast<float>((lit - 1) * tileWidth), 0.0f,
+                static_cast<float>(tileWidth), static_cast<float>(tileHeight), Gdiplus::UnitPixel);
         }
         // Silence/mute has no lit bars and a single flat baseline.
         Gdiplus::Pen baseline(Gdiplus::Color(100, 150, 171, 158));
         graphics.DrawLine(&baseline, left, top + height, left + width, top + height);
-        graphics.ResetClip();
+        graphics.Restore(clip);
         RECT label{bounds.left, bounds.bottom + d(3), bounds.right, bounds.bottom + d(21)};
         text(dc, fonts_[1], L"40 Hz", label, muted);
         text(dc, fonts_[1], L"1 kHz", label, muted, DT_CENTER | DT_SINGLELINE);
@@ -345,7 +410,12 @@ class Window {
     void paint(HDC target) {
         RECT client; GetClientRect(window_, &client);
         HDC dc = CreateCompatibleDC(target); HBITMAP bitmap = CreateCompatibleBitmap(target, std::max(1L, client.right), std::max(1L, client.bottom));
-        auto old = SelectObject(dc, bitmap); FillRect(dc, &client, bgBrush_);
+        auto old = SelectObject(dc, bitmap);
+        // Preserve the paint bounds in the back buffer too. Off-screen spectra
+        // and cards must not spend CPU rendering on every visible meter update.
+        RECT dirty{}; GetClipBox(target, &dirty);
+        IntersectClipRect(dc, dirty.left, dirty.top, dirty.right, dirty.bottom);
+        FillRect(dc, &client, bgBrush_);
         int w = width_ - 48;
         text(dc, fonts_[3], L"Gemeinsam hören", rect(24, 24, w - 172, 42));
         rounded(dc, rect(24, 86, w, 214), RGB(255, 255, 255), static_cast<float>(d(10)));
@@ -360,6 +430,7 @@ class Window {
         if (rows_.empty()) text(dc, fonts_[0], L"Füge deine in Windows gekoppelten Kopfhörer hinzu.\nAuch USB- und andere Audioausgaben sind möglich.", rect(26, outputTop + 9, w - 4, 65), muted, DT_WORDBREAK | DT_NOPREFIX);
         for (std::size_t i = 0; i < snapshot_.routes.size(); ++i) {
             const auto& r = snapshot_.routes[i]; int y = outputTop + static_cast<int>(i) * outputStep;
+            auto card = rect(24, y, w, 238); if (!RectVisible(dc, &card)) continue;
             rounded(dc, rect(24, y, w, 238), RGB(255, 255, 255), static_cast<float>(d(10)));
             rounded(dc, rect(40, y + 18, 36, 44), background, static_cast<float>(d(6)));
             text(dc, iconFont_, L"\xE7F6", rect(46, y + 26, 30, 32));
@@ -524,7 +595,14 @@ class Window {
             }
         }
     }
-    void scroll(int position) { scroll_ = position; layout(); }
+    void scroll(int position) {
+        scroll_ = position;
+        layout();
+        // Finish a complete composited frame before returning to queued wheel
+        // events; WM_PAINT alone can be starved during continuous scrolling.
+        // Also flush a pending resize when the requested scroll position is unchanged.
+        RedrawWindow(window_, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
+    }
     LRESULT message(UINT message, WPARAM wp, LPARAM lp) {
         switch (message) {
         case WM_CREATE:
@@ -574,7 +652,12 @@ class Window {
                 auto id = row.id; int volume = static_cast<int>(SendMessageW(slider, TBM_GETPOS, 0, 0));
                 audio_->command([id, volume](Settings& s, bool&) { for (auto& o : s.outputs) if (o.id == id) o.volume = volume; });
             }
-            InvalidateRect(window_, nullptr, FALSE); return 0;
+            for (std::size_t i = 0; i < rows_.size(); ++i) if (rows_[i].slider == slider) {
+                int y = outputTop + static_cast<int>(i) * outputStep;
+                auto percent = rect(width_ - 88, y + 111, 48, 22);
+                InvalidateRect(window_, &percent, FALSE); invalidateSpectrum(y + 146);
+            }
+            return 0;
         }
         case WM_VSCROLL: {
             SCROLLINFO info{}; info.cbSize = sizeof(info); info.fMask = SIF_ALL; GetScrollInfo(window_, SB_VERT, &info); int p = scroll_;
@@ -626,7 +709,9 @@ public:
         int height = std::min(d(preview_ ? 1080 : 850), static_cast<int>(area.bottom - area.top - 40));
         int width = d(660);
         auto title = L"BT Audio Splitter · " + wide(APP_VERSION_TEXT);
-        HWND w = CreateWindowExW(WS_EX_CONTROLPARENT, L"BtAudioSplitterNative", title.c_str(), WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN,
+        // Buffer the parent and native child controls as one frame, rather than
+        // showing the card background before its buttons/trackbars have painted.
+        HWND w = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_COMPOSITED, L"BtAudioSplitterNative", title.c_str(), WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN,
             area.left + (area.right - area.left - width) / 2, area.top + 20, width, height, nullptr, nullptr, appInstance, this);
         if (!w) throw std::runtime_error("Fenster konnte nicht erstellt werden.");
         return w;

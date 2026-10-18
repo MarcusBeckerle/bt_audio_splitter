@@ -2,6 +2,7 @@
 // detect stale pixels left behind when native child windows move during scrolling.
 #include "../ui.cpp"
 #include <iostream>
+#include <chrono>
 
 namespace splitter {
 namespace {
@@ -25,9 +26,9 @@ struct WindowRenderingTest {
         if (!copied) throw std::runtime_error("Cannot capture the test window's client surface.");
         return result;
     }
-    static void verify(Window& window, const std::string& scenario) {
+    static void verify(Window& window, const std::string& scenario, bool flush = true) {
         // Process only the regions invalidated by the application, as the message loop does.
-        RedrawWindow(window.window_, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
+        if (flush) RedrawWindow(window.window_, nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
         auto actual = pixels(window.window_);
         // A complete repaint at the same scroll offset is the reference image.
         RedrawWindow(window.window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -61,7 +62,7 @@ struct WindowRenderingTest {
                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
                 for (int offset : {0, 60, 120, 340, 2000, 1000, 200, 0}) {
                     window.scroll(window.d(offset));
-                    verify(window, "dpi=" + std::to_string(dpi) + ", outputs=" + std::to_string(count) + ", offset=" + std::to_string(offset)); ++checks;
+                    verify(window, "immediate scroll frame: dpi=" + std::to_string(dpi) + ", outputs=" + std::to_string(count) + ", offset=" + std::to_string(offset), false); ++checks;
                 }
                 // Expand/collapse, timer refresh and keyboard focus also reposition controls.
                 window.expanded_ = false; window.update(); verify(window, "collapse"); ++checks;
@@ -75,6 +76,19 @@ struct WindowRenderingTest {
                 window.snapshot_.settings.muted = false; window.update(); verify(window, "master unmute"); ++checks;
                 if (!window.rows_.empty()) {
                     window.scroll(window.d(outputTop - 8));
+                    verify(window, "prepare idle frame"); ++checks;
+                    // Off-screen children may retain dirty regions from earlier
+                    // layouts; isolate invalidations caused by this refresh.
+                    for (HWND child = GetWindow(handle, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) ValidateRect(child, nullptr);
+                    window.update();
+                    for (HWND control = GetWindow(handle, GW_CHILD); control; control = GetWindow(control, GW_HWNDNEXT))
+                        if (GetUpdateRect(control, nullptr, FALSE)) throw std::runtime_error("Idle refresh invalidates control " + std::to_string(GetDlgCtrlID(control)));
+                    verify(window, "idle refresh keeps controls"); ++checks;
+                    for (HWND child = GetWindow(handle, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) ValidateRect(child, nullptr);
+                    window.snapshot_.spectrum.fill(.6f); window.update();
+                    for (HWND control = GetWindow(handle, GW_CHILD); control; control = GetWindow(control, GW_HWNDNEXT))
+                        if (GetUpdateRect(control, nullptr, FALSE)) throw std::runtime_error("Spectrum refresh invalidates control " + std::to_string(GetDlgCtrlID(control)));
+                    verify(window, "meter refresh keeps controls"); ++checks;
                     int savedVolume = window.snapshot_.routes[0].preference.volume;
                     SendMessageW(window.rows_[0].mute, BM_CLICK, 0, 0);
                     if (!window.snapshot_.routes[0].preference.muted) throw std::runtime_error("Device mute click failed.");
@@ -102,6 +116,18 @@ struct WindowRenderingTest {
                     }
                     SendMessageW(slider, WM_LBUTTONUP, 0, MAKELPARAM(8, (thumb.top + thumb.bottom) / 2));
                     window.scroll(window.d(340)); verify(window, "scroll after drag"); ++checks;
+                    if (count == 5) {
+                        double totalMs = 0;
+                        for (int step = 0; step < 12; ++step) {
+                            window.snapshot_.spectrum.fill(.25f + .05f * step);
+                            SendMessageW(handle, WM_TIMER, 1, 0);
+                            auto start = std::chrono::steady_clock::now();
+                            SendMessageW(handle, WM_MOUSEWHEEL, MAKEWPARAM(0, step < 6 ? -WHEEL_DELTA : WHEEL_DELTA), 0);
+                            totalMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+                            verify(window, "wheel burst with live spectra", false); ++checks;
+                        }
+                        std::cout << "Scroll frame mean (5 outputs, " << dpi << " DPI, " << height << " height): " << totalMs / 12 << " ms\n";
+                    }
                 }
             }
         }

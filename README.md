@@ -15,6 +15,9 @@ Wiederaufnahme und eine kleine, helle Oberfläche. Kein Mikrofonzugriff.
 1. Die EXE aus dem Release herunterladen und starten. Alternativ ZIP entpacken;
    es enthält zusätzlich README und Lizenzdateien. Die EXE allein reicht;
    Lizenztexte sind auch unter **Über Audio Splitter · Lizenzen** enthalten.
+   Bei Updates zuerst die alte App schließen. Die laufende Versionsnummer steht
+   im Fenstertitel. Eine andere bereits laufende Version wird mit einem Hinweis
+   angezeigt und nicht still durch die neue EXE ersetzt.
 2. **Einrichtung → Treiber installieren** wählen. Die App lädt das unveränderte
    **VB-CABLE**-Paket vom Hersteller (ca. 1,3 MB), prüft SHA-256 und die
    Windows-Signatur des Setups. In der Administratorabfrage zustimmen, im
@@ -61,6 +64,8 @@ Windows-Geräte werden nicht als installierter Treiber gewertet.
 | Verbinden | Wiedergabe aktivieren und bei erneuter Verfügbarkeit automatisch fortsetzen. |
 | Pausieren | Stream beenden; bleibt auch nach Aus-/Einschalten und App-Neustart pausiert. |
 | Lautstärke | Nur diesen weitergeleiteten Stream regeln; Wert wird gespeichert. |
+| Mute all / Unmute all | Alle Ausgaben stummschalten, ohne ihre Einzelpegel oder Verbindungen zu ändern. Auch der globale Mute-Zustand wird gespeichert. |
+| ⋯ → Zeitabgleich | Schnellere Ausgaben zusätzlich um 0–1000 ms verzögern; Einstellung pro Gerät speichern. |
 | ⋯ → Geräteinformationen | Vollständiger Windows-Name, Gerätekennung und Status/Fehler. |
 | ⋯ → Gerät entfernen | Stream beenden und gespeicherte Zuordnung löschen. Windows-Kopplung bleibt bestehen. |
 | Einrichtung | Treiber, Windows-Name, Eingangsauswahl sowie Bluetooth-/Soundeinstellungen. |
@@ -75,6 +80,25 @@ verbunden hat**. Die App führt kein Bluetooth-Pairing durch und kann keine vom
 Windows-Treiber abgelehnte Funkverbindung erzwingen. Geräte werden ungefähr
 einmal pro Sekunde geprüft; Aufbau eines neuen Audiostreams kommt hinzu.
 Beim Schließen der App endet die Weiterleitung; sie läuft nicht versteckt im Tray.
+
+**Frequenzanzeigen:** Oben unter **Virtual Input**, bei jeder Ausgabe direkt unter
+dem Lautstärkeregler. 48 segmentierte grün/gelb/orange Balken zeigen logarithmische
+Frequenzbänder von 40 Hz bis 20 kHz auf einer gemeinsamen Skala von −72 bis 0 dBFS.
+Bei niedrigeren Abtastraten endet das Signal an deren Nyquist-Grenze. Der Eingang
+wird mit einem Hann-Fenster und einer 2048-Punkt-FFT getrennt für beide Stereo-
+kanäle analysiert; Gegenphasigkeit löscht die Anzeige nicht aus.
+
+Die Ausgabediagramme sind Pegelvorschauen desselben Eingangsspektrums mit der
+eingestellten Software-Dämpfung: **100 % identisch**, **0 % / Mute / Pause flach**.
+Sie messen weder den Schall am Kopfhörer noch Bluetooth-/Windows-Effekte und
+stellen die zeitliche Verschiebung durch den Zeitabgleich nicht dar. Der echte
+Windows-Name des virtuellen Geräts steht weiterhin unter „Virtual Input“.
+
+**Leise Lautstärke:** Die Regler arbeiten logarithmisch. 100 % ist unverändert,
+0 % ist digitale Stille, 1–100 % decken −60 bis 0 dB ab. 10 % entspricht ungefähr
+−55 dB statt bisher −20 dB; dadurch wird der leise Bereich besser bedienbar.
+Bestehende Prozentwerte bleiben beim Update erhalten, klingen aber entsprechend
+der neuen Kennlinie leiser. Windows-/Player-/Gerätelautstärke wirken zusätzlich.
 
 ## Filmqualität und Grenzen
 
@@ -91,16 +115,28 @@ Beim Schließen der App endet die Weiterleitung; sie läuft nicht versteckt im T
   Diese Hardwarekapazität kann die App nicht garantieren.
 - Verschiedene Kopfhörer haben unterschiedliche Latenzen. Es gibt keine
   automatische Laufzeitmessung oder exakte Synchronisierung ihrer Geräteuhren.
-  Ein Bild/Ton-Versatz im Player korrigiert den gemeinsamen Versatz, nicht
-  unterschiedliche Verzögerungen zwischen Kopfhörern.
-- Pro Ausgabe: eigener Audiothread, 180-ms-Live-Puffer, WASAPI-Puffer von
-  angeforderten 80 ms. Bei Überlauf werden alte vollständige Frames verworfen;
+  Über **⋯ → Zeitabgleich** lässt sich die schnellere Ausgabe manuell an die
+  langsamere anpassen. Das entfernt keine Bluetooth-Transportlatenz und muss
+  nach einem Geräte-/Codecwechsel eventuell erneut eingestellt werden.
+- Pro Ausgabe: eigener ereignisgesteuerter Audiothread, maximal 40-ms-Live-Queue,
+  WASAPI-Puffer von angeforderten 20 ms statt vorher 80 ms. Windows kann einen
+  größeren Mindestpuffer benötigen. Capture nutzt ebenfalls Audioereignisse;
+  der manuell eingestellte Zeitabgleich kommt zusätzlich hinzu.
+  Bei Überlauf werden alte vollständige Frames verworfen;
   bei Unterlauf wird Stille ausgegeben. Die Verzögerung wächst dadurch nicht
   unbegrenzt, bei Aussetzern/Clock-Drift können hörbare Übergänge entstehen.
 - Geschützte Medien können Loopback-Capture verhindern. Exclusive-Mode-Ausgabe
   des Players ist nicht vorgesehen. Die App zeichnet keine Audiodateien auf.
 
 Player-, Windows- und Kopfhörerlautstärke wirken zusätzlich zu den App-Reglern.
+
+Für einen Film mit Bluetooth und Lautsprechern: zunächst die langsamsten
+Kopfhörer bei **0 ms** lassen. Bei den schnelleren Lautsprechern den Zeitabgleich
+in kleinen Schritten erhöhen, bis das Echo möglichst verschwindet. Anschließend
+im Filmplayer den Ton früher bzw. das Bild später ausgeben, falls Lippenbewegung
+und Ton noch versetzt sind. Eine App, die nur bereits abgespielten Windows-Ton
+abgreift, kann zukünftigen Filmton nicht vorab ausgeben. Live-Inhalte und Player
+ohne Audio-Versatz bieten diese zusätzliche Korrektur möglicherweise nicht.
 
 ## Entfernen
 
@@ -137,7 +173,7 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.3`
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.4`
 kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
 aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
@@ -148,8 +184,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.3-win-x64.exe
-  BT-Audio-Splitter-0.1.3-win-x64.zip
+  BT-Audio-Splitter-0.1.4-win-x64.exe
+  BT-Audio-Splitter-0.1.4-win-x64.zip
   SHA256SUMS.txt
 ```
 
@@ -166,6 +202,7 @@ Der private Schlüssel wird nicht bei normalen Push-/PR-Builds bereitgestellt.
 ```text
 native/core.hpp       Einstellungen, Zustandsregeln, begrenzter Stereo-Ringpuffer
 native/pipe.hpp       Threadsichere Audiopuffer und Verteilung an mehrere Ausgaben
+native/spectrum.hpp   Stereo-FFT und Spektrumsanzeige mit Software-Dämpfung
 native/platform.*     UTF-8, COM-/Handle-Lebensdauer, atomare Dateien, Logrotation
 native/audio.*        WASAPI, Gerätesuche, Reconnect, getrennte MTA-Audiothreads
 native/setup.*        Geprüfter Herstellerdownload, Setup und erhöhter Namenshelfer
@@ -196,17 +233,22 @@ und die statisch eingebundenen C++-/MinGW-Hilfsroutinen.
 
 ## Tests und Abnahme
 
-`build.ps1` führt 16 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
+`build.ps1` führt 23 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
 Pause, dauerhafte Entfernung, fünf Geräte, IDs/Unicode/Lautstärken, defekte
 Einstellungen, Pufferverhalten gegen ein Zufalls-Referenzmodell, getrennte
-Verteilung, parallele Zugriffe und atomare Dateiersetzung.
+Verteilung, parallele Zugriffe und atomare Dateiersetzung, logarithmische Pegel,
+Master-Mute, Verzögerung, Migration alter Einstellungen und Spektrumsanalyse.
 
-`build.ps1 -UiTests` ergänzt 234 Grafikprüfungen auf einem Windows-Desktop;
+`build.ps1 -UiTests` ergänzt 474 Grafikprüfungen auf einem Windows-Desktop;
 GitHub-CI und Release-Builds führen sie ebenfalls aus. Das separate Testprogramm
 zeigt kurz ein eigenes Fenster mit Beispieldaten, ohne Audiogeräte oder
 Benutzereinstellungen anzufassen. Es vergleicht dessen sichtbare Pixel nach
 Scrollen, Größenänderung, Ein-/Ausklappen und Fokuswechsel mit einem vollständigen
 Neuzeichnen an derselben Position (0/2/5 Ausgaben, 100/150/200% Layout-Skalierung).
+Test und App verwenden dasselbe Common-Controls-v6-Manifest. Echtes Ziehen der
+Regler bei gleichzeitigem Timer-Refresh und wechselndem Spektrum sowie
+Master-Mute/Unmute sind enthalten. Der Reglerfehler wurde vor der Korrektur
+mit diesem erweiterten Test reproduziert.
 Es liest ausschließlich die Clientfläche dieses Testfensters und speichert keine
 Bildschirmaufnahmen. So werden auch Bildreste erkannt, die in einer statischen
 Vorschau nicht auftreten.

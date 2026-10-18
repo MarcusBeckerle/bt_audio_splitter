@@ -1,5 +1,6 @@
 #include "ui.hpp"
 #include "audio.hpp"
+#include "../artifacts/native/version.h"
 #include <shellapi.h>
 #include <exception>
 
@@ -28,7 +29,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         Handle mutex(CreateMutexW(nullptr, FALSE, L"Local\\MarcusBeckerle.BtAudioSplitter"));
         if (!mutex.get()) throw std::runtime_error("Instanzsperre konnte nicht erstellt werden.");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            if (auto other = FindWindowW(L"BtAudioSplitterNative", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }
+            if (auto other = FindWindowW(L"BtAudioSplitterNative", nullptr)) {
+                ShowWindow(other, SW_RESTORE); SetForegroundWindow(other);
+                wchar_t title[256]{}; GetWindowTextW(other, title, 256);
+                if (std::wstring(title) != L"BT Audio Splitter · " + wide(APP_VERSION_TEXT)) {
+                    auto message = L"Es läuft bereits eine andere Version von Audio Splitter.\n\nBitte das alte Fenster schließen und diese EXE erneut starten, um Version " + wide(APP_VERSION_TEXT) + L" zu verwenden.\n\nDie laufende Audioausgabe wird nicht automatisch beendet.";
+                    MessageBoxW(other, message.c_str(), L"Neue Version starten", MB_OK | MB_ICONINFORMATION);
+                }
+            }
             return 0;
         }
         return runUi(instance);

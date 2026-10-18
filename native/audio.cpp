@@ -45,6 +45,7 @@ WAVEFORMATEX floatFormat(DWORD rate) {
 }
 
 class Source {
+    Handle event_{CreateEventW(nullptr, FALSE, FALSE, nullptr)};
     Com<IAudioClient> client_;
     Com<IAudioCaptureClient> capture_;
     std::unique_ptr<WAVEFORMATEX, CoMemory> format_;
@@ -68,13 +69,16 @@ public:
             (!floating_ && raw->wBitsPerSample != 16 && raw->wBitsPerSample != 24 && raw->wBitsPerSample != 32) ||
             raw->nBlockAlign != 2 * (raw->wBitsPerSample / 8) || rate() < 8000 || rate() > 192000)
             throw std::runtime_error("Eingangsformat nicht unterstützt. Bitte Stereo, 48 kHz wählen.");
-        check(client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_NOPERSIST,
-            800000, 0, raw, nullptr), "Audioeingang starten");
+        if (!event_.get()) throw std::runtime_error("Audio-Ereignis konnte nicht erstellt werden.");
+        check(client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            0, 0, raw, nullptr), "Audioeingang starten");
+        check(client_->SetEventHandle(event_.get()), "Audioeingangs-Ereignis setzen");
         check(client_->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(capture_.put())), "Loopback öffnen");
         UINT32 capacity = 0; check(client_->GetBufferSize(&capacity), "Eingangspuffer lesen"); scratch_.resize(capacity * 2);
         check(client_->Start(), "Audioeingang aktivieren");
     }
     ~Source() { if (client_) client_->Stop(); }
+    void wait() { if (WaitForSingleObject(event_.get(), 20) == WAIT_FAILED) throw std::runtime_error("Audioeingangs-Ereignis fehlgeschlagen."); }
     template<class Callback> void pump(Callback&& receive) {
         UINT32 frames = 0;
         // Limit work per iteration, so unusually busy input cannot starve output or UI commands.
@@ -102,27 +106,32 @@ public:
 };
 
 class Sink {
+    Handle event_{CreateEventW(nullptr, FALSE, FALSE, nullptr)};
     Com<IAudioClient> client_;
     Com<IAudioRenderClient> render_;
     UINT32 bufferFrames_ = 0;
     std::shared_ptr<AudioPipe> pipe_;
 public:
-    Sink(const std::string& id, DWORD rate, int volume, std::shared_ptr<AudioPipe> pipe = {}) : pipe_(pipe ? std::move(pipe) : std::make_shared<AudioPipe>(rate * 180 / 1000, volume)) {
+    Sink(const std::string& id, DWORD rate, int volume, std::shared_ptr<AudioPipe> pipe = {}) : pipe_(pipe ? std::move(pipe) : std::make_shared<AudioPipe>(rate * 40 / 1000, volume)) {
         auto d = device(id); client_ = client(d.get());
         auto format = floatFormat(rate);
         // Windows negotiates each device independently; its high-quality shared-mode resampler
         // handles differing sample rates. No microphone/communications stream is ever opened.
         check(client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | AUDCLNT_STREAMFLAGS_NOPERSIST,
-            800000, 0, &format, nullptr), "Stereo-Ausgabe öffnen");
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            200000, 0, &format, nullptr), "Stereo-Ausgabe öffnen");
+        if (!event_.get()) throw std::runtime_error("Audio-Ereignis konnte nicht erstellt werden.");
+        check(client_->SetEventHandle(event_.get()), "Audioausgangs-Ereignis setzen");
         check(client_->GetBufferSize(&bufferFrames_), "Ausgangspuffer lesen");
         check(client_->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(render_.put())), "Audioausgabe öffnen");
         BYTE* buffer = nullptr;
         check(render_->GetBuffer(bufferFrames_, &buffer), "Audioausgabe vorbereiten");
         check(render_->ReleaseBuffer(bufferFrames_, AUDCLNT_BUFFERFLAGS_SILENT), "Audioausgabe vorbereiten");
+        pipe_->clearPending(); // Do not replay data accumulated during slow Bluetooth activation.
         check(client_->Start(), "Audioausgabe aktivieren");
     }
     ~Sink() { if (client_) client_->Stop(); }
+    void wait() { if (WaitForSingleObject(event_.get(), 20) == WAIT_FAILED) throw std::runtime_error("Audioausgangs-Ereignis fehlgeschlagen."); }
     void volume(int volume) { pipe_->volume = volume; }
     void write(const float* samples, UINT32 frames) { pipe_->push(samples, frames); }
     void pump() {
@@ -140,9 +149,8 @@ public:
 // Each driver owns a separate MTA thread. Activation, device loss or a stalled driver on
 // one output cannot prevent another output from servicing its WASAPI buffer.
 class Session {
-    std::mutex errorMutex_, waitMutex_;
+    std::mutex errorMutex_;
     std::string error_;
-    std::condition_variable wake_;
 protected:
     std::atomic<bool> stop_{false};
     std::thread thread_;
@@ -156,38 +164,53 @@ protected:
             } catch (const std::exception& e) { std::lock_guard lock(errorMutex_); error_ = e.what(); }
         });
     }
-    void wait() { std::unique_lock lock(waitMutex_); wake_.wait_for(lock, std::chrono::milliseconds(5), [&] { return stop_.load(); }); }
-    void stop() { stop_ = true; wake_.notify_one(); if (thread_.joinable()) thread_.join(); }
+    void stop() { stop_ = true; if (thread_.joinable()) thread_.join(); }
 public:
     virtual ~Session() { stop(); }
     void pump() { std::lock_guard lock(errorMutex_); if (!error_.empty()) throw std::runtime_error(error_); }
 };
 class CaptureSession : public Session {
     std::atomic<DWORD> rate_{0};
+    std::mutex spectrumMutex_;
+    Spectrum spectrum_{};
+    Clock::time_point spectrumAt_{};
 public:
     CaptureSession(const std::string& id, std::shared_ptr<AudioBus> bus) {
         start([this, id, bus = std::move(bus)] {
-            Source source(id); rate_ = source.rate();
-            while (!stop_) { source.pump([&](const float* data, UINT32 frames) { bus->push(data, frames); }); wait(); }
+            Source source(id); rate_ = source.rate(); SpectrumAnalyzer analyzer(source.rate());
+            while (!stop_) {
+                source.pump([&](const float* data, UINT32 frames) {
+                    bus->push(data, frames);
+                    if (analyzer.push(data, frames)) { std::lock_guard lock(spectrumMutex_); spectrum_ = analyzer.bands(); spectrumAt_ = Clock::now(); }
+                });
+                source.wait();
+            }
         });
     }
     ~CaptureSession() override { stop(); }
     DWORD rate() const { return rate_.load(); }
+    Spectrum spectrum() {
+        std::lock_guard lock(spectrumMutex_);
+        return Clock::now() - spectrumAt_ < std::chrono::milliseconds(250) ? spectrum_ : Spectrum{};
+    }
 };
 class OutputSession : public Session {
     std::shared_ptr<AudioPipe> pipe_;
     std::atomic<bool> ready_{false};
+    DWORD rate_;
 public:
-    OutputSession(const std::string& id, DWORD rate, int volume) : pipe_(std::make_shared<AudioPipe>(rate * 180 / 1000, volume)) {
+    OutputSession(const std::string& id, DWORD rate, int volume, int delayMs = 0) : pipe_(std::make_shared<AudioPipe>(rate * 40 / 1000, volume)), rate_(rate) {
+        delay(delayMs);
         start([this, id, rate, volume] {
             Sink sink(id, rate, volume, pipe_); ready_ = true;
-            while (!stop_) { sink.pump(); wait(); }
+            while (!stop_) { sink.pump(); sink.wait(); }
         });
     }
     ~OutputSession() override { pipe_->close(); stop(); }
     auto pipe() const { return pipe_; }
     bool ready() const { return ready_; }
     void volume(int value) { pipe_->volume = value; }
+    void delay(int ms) { pipe_->delayFrames(static_cast<std::size_t>(rate_) * std::clamp(ms, 0, maxOutputDelayMs) / 1000); }
 };
 
 class Engine {
@@ -219,15 +242,11 @@ public:
     void reconcile(bool allowRetry) {
         const auto* input = find(devices_, settings_.source);
         const bool inputOK = input && input->available && input->cable && !suspended_;
-        bool wanted = false;
-        for (const auto& o : settings_.outputs) {
-            const auto* d = find(devices_, o.id);
-            if (decide(o.enabled, d && !d->cable && !d->handsFree, d && d->available, inputOK) == RouteState::Playing) wanted = true;
-        }
-        if (!inputOK || !wanted || sourceId_ != settings_.source) {
+        // Keep the input meter alive even when every output is paused.
+        if (!inputOK || sourceId_ != settings_.source) {
             sinks_.clear(); source_.reset(); sourceId_ = settings_.source;
         }
-        if (inputOK && wanted && !source_ && allowRetry) {
+        if (inputOK && !source_ && allowRetry) {
             try { source_ = std::make_unique<CaptureSession>(settings_.source, bus_); sourceError_.clear(); }
             catch (const std::exception& e) { sourceError_ = e.what(); logError(e.what()); }
         }
@@ -235,12 +254,12 @@ public:
             auto o = std::find_if(settings_.outputs.begin(), settings_.outputs.end(), [&](const auto& p) { return p.id == it->first; });
             const auto* d = find(devices_, it->first);
             if (!source_ || o == settings_.outputs.end() || decide(o->enabled, d && !d->cable && !d->handsFree, d && d->available, inputOK) != RouteState::Playing) it = sinks_.erase(it);
-            else { it->second->volume(o->volume); ++it; }
+            else { it->second->volume(settings_.muted ? 0 : o->volume); it->second->delay(o->delayMs); ++it; }
         }
         for (const auto& o : settings_.outputs) {
             const auto* d = find(devices_, o.id);
             if (!source_ || !source_->rate() || decide(o.enabled, d && !d->cable && !d->handsFree, d && d->available, inputOK) != RouteState::Playing || !allowRetry || sinks_.contains(o.id)) continue;
-            try { sinks_[o.id] = std::make_unique<OutputSession>(o.id, source_->rate(), o.volume); routeErrors_.erase(o.id); }
+            try { sinks_[o.id] = std::make_unique<OutputSession>(o.id, source_->rate(), settings_.muted ? 0 : o.volume, o.delayMs); routeErrors_.erase(o.id); }
             catch (const std::exception& e) { routeErrors_[o.id] = e.what(); logError(e.what()); }
         }
         std::vector<std::shared_ptr<AudioPipe>> pipes;
@@ -265,6 +284,7 @@ public:
     }
     Snapshot snapshot() {
         Snapshot s; s.settings = settings_; s.devices = devices_; s.suspended = suspended_;
+        if (source_) s.spectrum = source_->spectrum();
         s.devicesChecked = devicesChecked_;
         s.driverInstalled = std::any_of(devices_.begin(), devices_.end(), [](const auto& d) { return d.cable && d.present; });
         const auto* input = find(devices_, settings_.source);
@@ -352,7 +372,7 @@ void AudioWorker::run() noexcept {
             if (!commands.empty() || now >= publishAt) {
                 auto s = engine.snapshot(); if (!enumerationError.empty()) s.error = enumerationError;
                 { std::lock_guard lock(mutex_); snapshot_ = std::move(s); }
-                publishAt = now + std::chrono::milliseconds(200);
+                publishAt = now + std::chrono::milliseconds(100);
             }
             std::unique_lock lock(mutex_);
             wake_.wait_for(lock, std::chrono::milliseconds(5), [&] { return stop_ || !commands_.empty(); });

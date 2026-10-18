@@ -71,6 +71,26 @@ struct WindowRenderingTest {
                 SendMessageW(handle, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
                 verify(window, "mouse wheel"); ++checks;
                 window.update(); verify(window, "timer refresh"); ++checks;
+                window.snapshot_.settings.muted = true; window.update(); verify(window, "master mute"); ++checks;
+                window.snapshot_.settings.muted = false; window.update(); verify(window, "master unmute"); ++checks;
+                if (!window.rows_.empty()) {
+                    window.scroll(window.d(outputTop - 8));
+                    HWND slider = window.rows_[0].slider;
+                    SetFocus(slider);
+                    RECT thumb{}, bounds{};
+                    SendMessageW(slider, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+                    GetClientRect(slider, &bounds);
+                    SendMessageW(slider, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM((thumb.left + thumb.right) / 2, (thumb.top + thumb.bottom) / 2));
+                    for (int step : {1, 3, 6, 9, 7, 4, 2, 0}) {
+                        SendMessageW(slider, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(8 + (bounds.right - 16) * step / 10, (thumb.top + thumb.bottom) / 2));
+                        verify(window, "drag before timer refresh"); ++checks;
+                        for (std::size_t i = 0; i < spectrumBands; ++i) window.snapshot_.spectrum[i] = .4f + .4f * std::sin(static_cast<float>(i + step));
+                        SendMessageW(handle, WM_TIMER, 1, 0);
+                        verify(window, "drag during timer refresh"); ++checks;
+                    }
+                    SendMessageW(slider, WM_LBUTTONUP, 0, MAKELPARAM(8, (thumb.top + thumb.bottom) / 2));
+                    window.scroll(window.d(340)); verify(window, "scroll after drag"); ++checks;
+                }
             }
         }
         DestroyWindow(handle);
@@ -85,6 +105,7 @@ int main() {
     try {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         appInstance = GetModuleHandleW(nullptr);
+        if (!FindResourceW(appInstance, MAKEINTRESOURCEW(1), RT_MANIFEST)) throw std::runtime_error("UI tests require the same manifest as the app.");
         INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
         Gdiplus::GdiplusStartupInput startup; ULONG_PTR token = 0;
         if (Gdiplus::GdiplusStartup(&token, &startup, nullptr) != Gdiplus::Ok) throw std::runtime_error("GDI+ initialization failed.");
@@ -93,7 +114,7 @@ int main() {
         cls.lpfnWndProc = Window::proc; cls.lpszClassName = L"BtAudioSplitterNative";
         if (!RegisterClassExW(&cls)) throw std::runtime_error("Test window registration failed.");
         auto checks = WindowRenderingTest::run();
-        std::cout << "PASS " << checks << " UI repaint comparisons (0/2/5 outputs; 100/150/200% scale; scroll, resize, collapse, focus).\n";
+        std::cout << "PASS " << checks << " UI repaint comparisons (themed controls; 0/2/5 outputs; 100/150/200% scale; dragging, meters, mute, scroll, resize, focus).\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
 }

@@ -10,17 +10,35 @@ namespace splitter {
 class AudioPipe {
     std::mutex mutex_;
     FrameQueue queue_;
+    std::vector<float> delay_;
+    std::size_t delayPosition_ = 0;
     bool closed_ = false;
 public:
     std::atomic<int> volume{70};
     explicit AudioPipe(std::size_t frames, int gain = 70) : queue_(frames), volume(gain) {}
+    void delayFrames(std::size_t frames) {
+        // Allocate outside the audio lock; unchanged settings are cheap to apply.
+        { std::lock_guard lock(mutex_); if (delay_.size() == frames * 2) return; }
+        std::vector<float> next(frames * 2, 0.0f);
+        std::lock_guard lock(mutex_); delay_.swap(next); delayPosition_ = 0;
+    }
+    void clearPending() { std::lock_guard lock(mutex_); queue_.clear(); }
     void push(const float* data, std::size_t frames) {
         std::lock_guard lock(mutex_); if (!closed_) queue_.push(data, frames);
     }
     void pop(float* data, std::size_t frames) {
-        std::lock_guard lock(mutex_); queue_.pop(data, frames, std::clamp(volume.load(), 0, 100) / 100.0f);
+        std::lock_guard lock(mutex_);
+        queue_.pop(data, frames, 1.0f);
+        const float gain = volumeGain(volume.load());
+        for (std::size_t i = 0; i < frames * 2; ++i) {
+            if (!delay_.empty() && !closed_) {
+                std::swap(data[i], delay_[delayPosition_]);
+                delayPosition_ = (delayPosition_ + 1) % delay_.size();
+            }
+            data[i] *= gain; // Apply gain after the delay: mute/volume changes are immediate.
+        }
     }
-    void close() { std::lock_guard lock(mutex_); closed_ = true; queue_.clear(); }
+    void close() { std::lock_guard lock(mutex_); closed_ = true; queue_.clear(); std::fill(delay_.begin(), delay_.end(), 0.0f); }
 };
 class AudioBus {
     using Pipes = std::vector<std::shared_ptr<AudioPipe>>;

@@ -10,19 +10,29 @@
 
 namespace splitter {
 constexpr std::size_t maxOutputs = 5;
+constexpr int maxOutputDelayMs = 1000;
+// A percentage controls attenuation in dB, not linear amplitude. Keep an exact
+// unity endpoint and digital silence at zero; the quiet range stays usable.
+inline float volumeGain(int percent) {
+    percent = std::clamp(percent, 0, 100);
+    return percent == 0 ? 0.0f : std::pow(10.0f, (-60.0f * (100 - percent) / 99.0f) / 20.0f);
+}
 struct Output {
     std::string id, name;
     int volume = 70;
     bool enabled = true;
+    int delayMs = 0;
 };
 struct Settings {
     std::string source;
     std::vector<Output> outputs;
+    bool muted = false;
     void add(Output output) {
         if (outputs.size() >= maxOutputs) throw std::runtime_error("Maximal fünf Ausgaben möglich.");
         if (output.id.empty() || std::any_of(outputs.begin(), outputs.end(), [&](const auto& o) { return o.id == output.id; }))
             throw std::runtime_error("Dieses Gerät wurde bereits hinzugefügt.");
         output.volume = std::clamp(output.volume, 0, 100);
+        if (output.delayMs < 0 || output.delayMs > maxOutputDelayMs) throw std::runtime_error("Ungültiger Audio-Zeitabgleich.");
         outputs.push_back(std::move(output));
     }
     void remove(const std::string& id) {
@@ -33,9 +43,10 @@ struct Settings {
 // Versioned, UTF-8 text with quoted strings. Endpoint IDs, not friendly names, are identities.
 inline std::string serialize(const Settings& s) {
     std::ostringstream out;
-    out << "BT_AUDIO_SPLITTER 1\n" << std::quoted(s.source) << '\n' << s.outputs.size() << '\n';
+    out << "BT_AUDIO_SPLITTER 2\n" << std::quoted(s.source) << '\n' << s.outputs.size() << '\n';
     for (const auto& o : s.outputs)
-        out << std::quoted(o.id) << ' ' << std::quoted(o.name) << ' ' << o.volume << ' ' << o.enabled << '\n';
+        out << std::quoted(o.id) << ' ' << std::quoted(o.name) << ' ' << o.volume << ' ' << o.enabled << ' ' << o.delayMs << '\n';
+    out << s.muted << '\n';
     return out.str();
 }
 inline Settings deserialize(const std::string& data) {
@@ -45,7 +56,7 @@ inline Settings deserialize(const std::string& data) {
     int version = 0;
     std::size_t count = 0;
     Settings s;
-    if (!(in >> marker >> version) || marker != "BT_AUDIO_SPLITTER" || version != 1 ||
+    if (!(in >> marker >> version) || marker != "BT_AUDIO_SPLITTER" || (version != 1 && version != 2) ||
         !(in >> std::quoted(s.source) >> count) || count > maxOutputs)
         throw std::runtime_error("Ungültige Einstellungsdatei.");
     for (std::size_t i = 0; i < count; ++i) {
@@ -55,7 +66,14 @@ inline Settings deserialize(const std::string& data) {
             (enabled != 0 && enabled != 1) || o.volume < 0 || o.volume > 100)
             throw std::runtime_error("Ungültige Geräteeinstellung.");
         o.enabled = enabled != 0;
+        if (version == 2 && (!(in >> o.delayMs) || o.delayMs < 0 || o.delayMs > maxOutputDelayMs))
+            throw std::runtime_error("Ungültiger Audio-Zeitabgleich.");
         s.add(std::move(o));
+    }
+    if (version == 2) {
+        int muted = 0;
+        if (!(in >> muted) || (muted != 0 && muted != 1)) throw std::runtime_error("Ungültige Stummschaltung.");
+        s.muted = muted != 0;
     }
     in >> std::ws;
     if (!in.eof()) throw std::runtime_error("Unerwartete Daten in Einstellungen.");

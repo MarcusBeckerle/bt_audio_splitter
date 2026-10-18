@@ -1,5 +1,6 @@
 #pragma once
 #include "platform.hpp"
+#include "spectrum.hpp"
 #include <condition_variable>
 #include <functional>
 #include <map>
@@ -17,6 +18,7 @@ struct Snapshot {
     std::vector<Endpoint> devices;
     std::vector<RouteView> routes;
     std::string sourceName, error;
+    Spectrum spectrum{};
     bool sourceReady = false, suspended = false, devicesChecked = false, driverInstalled = false;
 };
 std::vector<Endpoint> enumerateOutputs();

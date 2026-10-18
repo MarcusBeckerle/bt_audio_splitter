@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.4 — 2026-10-18 — Prerelease
+
+- Fix volume-thumb trails by invalidating the full custom-painted slider before
+  native painting. Avoid repositioning controls when their bounds did not change.
+- Run UI tests with the application's actual Common Controls v6 manifest;
+  simulate dragging during refresh and changing spectra, plus mute/unmute.
+- Show the running version in the window title and explain when a different
+  already-running version prevented a newly downloaded EXE from starting.
+- Add segmented green/yellow/orange frequency displays to Virtual Input and
+  below each output's volume slider. 100% matches the input, 0%/mute is flat.
+- Add Mute all / Unmute all while retaining each output's volume, pause and delay.
+- Logarithmic volume taper (-60..0 dB, plus digital mute) for finer quiet control.
+- Event-driven WASAPI capture/render; request 20 ms output buffers instead of
+  80 ms and bound each live queue to 40 ms instead of 180 ms.
+- Add persistent manual per-output delay (0–1000 ms) to align faster outputs with
+  slower headphones. Version 1 settings migrate automatically to version 2.
+
+Bluetooth transport latency is not removed, hardware clocks are not locked,
+and lip-sync may still require an audio offset in the movie player. The output
+spectra preview software gain using the same input frame; they are not acoustic
+measurements and do not visualize the manual delay's time shift.
+
 ## 0.1.3 — 2026-10-18 — Prerelease
 
 - Fix duplicated text and broken buttons after scrolling: move native controls

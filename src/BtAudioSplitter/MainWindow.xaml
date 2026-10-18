@@ -1,0 +1,86 @@
+<Window x:Class="BtAudioSplitter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="BT Audio Splitter" Width="640" Height="820" MinWidth="550" MinHeight="500"
+        Background="#F4F6F8" Foreground="{StaticResource Ink}" FontFamily="Segoe UI" FontSize="14"
+        WindowStartupLocation="CenterScreen" Closing="WindowClosing">
+    <ScrollViewer Background="#F4F6F8" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24">
+            <TextBlock Text="Gemeinsam hören" FontSize="30" FontWeight="SemiBold" Margin="0,0,0,24" />
+            <Border Style="{StaticResource Card}" Margin="0,0,0,22">
+                <StackPanel>
+                    <TextBlock Text="AUDIOEINGANG" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,0,0,10" />
+                    <DockPanel>
+                        <TextBlock Text="Audio Splitter" FontSize="20" FontWeight="SemiBold" Margin="0,0,18,0" />
+                        <TextBlock x:Name="SourceStatus" VerticalAlignment="Center" Text="Wird vorbereitet …" Foreground="{StaticResource Muted}" />
+                    </DockPanel>
+                    <TextBlock x:Name="SourceHint" Margin="0,10,0,0" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                               Text="Im Player oder in Windows als Ausgabe wählen." />
+                </StackPanel>
+            </Border>
+            <DockPanel Margin="0,0,0,14">
+                <Button x:Name="AddButton" DockPanel.Dock="Right" Content="＋  Hinzufügen" Style="{StaticResource PrimaryButton}" Click="AddClick" />
+                <TextBlock x:Name="OutputCount" Text="Kopfhörer · 0 von 5" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </DockPanel>
+            <TextBlock x:Name="EmptyHint" Text="Füge deine in Windows gekoppelten Kopfhörer hinzu. Auch USB- und andere Audioausgaben sind möglich."
+                       Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="2,2,2,18" />
+            <ItemsControl x:Name="OutputList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Background="#F4F6F8" CornerRadius="6" Width="34" Height="42" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7F6;" FontSize="24" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding DeviceInfo}" />
+                                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusColor}" Margin="0,5,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button Grid.Column="2" Content="{Binding ActionLabel}" Click="ToggleClick" VerticalAlignment="Top" />
+                                    <Button Grid.Column="3" Content="⋯" Margin="6,0,0,0" Padding="10,6" Click="MenuClick" VerticalAlignment="Top" AutomationProperties.Name="Geräteoptionen" />
+                                </Grid>
+                                <TextBlock Text="{Binding Detail}" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,4" />
+                                <Grid Margin="0,5,0,0">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="58" /></Grid.ColumnDefinitions>
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE767;" VerticalAlignment="Center" FontSize="19" />
+                                    <Slider Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                                            Value="{Binding Volume, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"
+                                            ValueChanged="VolumeChanged" PreviewMouseLeftButtonUp="VolumeReleased" LostKeyboardFocus="VolumeFocusLost"
+                                            AutomationProperties.Name="Lautstärke" />
+                                    <TextBlock Grid.Column="2" Text="{Binding VolumeLabel}" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Muted}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="SavedLabel" Text="Lautstärke und Verbindungsstatus werden gespeichert." Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" Margin="2,6,0,20" />
+            <Border x:Name="ErrorBox" Background="#FFF1DF" CornerRadius="6" Padding="12" Margin="0,0,0,14" Visibility="Collapsed">
+                <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="#77450A" />
+            </Border>
+            <Border Style="{StaticResource Card}">
+                <Expander x:Name="SetupExpander" Header="Einrichtung" FontSize="16" IsExpanded="True">
+                    <StackPanel Margin="0,14,0,0">
+                        <TextBlock x:Name="DriverStatus" FontSize="14" Text="Virtueller Audiotreiber: Wird geprüft …" Margin="0,0,0,12" />
+                        <WrapPanel>
+                            <Button x:Name="DriverButton" Content="Treiber installieren" Click="DriverClick" Margin="0,0,8,8" FontSize="13" />
+                            <Button Content="Bluetooth-Einstellungen" Click="BluetoothClick" Margin="0,0,0,8" FontSize="13" />
+                        </WrapPanel>
+                        <WrapPanel>
+                            <Button x:Name="RenameButton" Content="Windows-Namen setzen" Click="RenameClick" Margin="0,0,8,8" FontSize="13" />
+                            <Button Content="Soundeinstellungen" Click="SoundClick" Margin="0,0,8,8" FontSize="13" />
+                            <Button x:Name="SourceButton" Content="Eingang wählen" Click="SourceClick" Margin="0,0,0,8" FontSize="13" />
+                        </WrapPanel>
+                        <TextBlock x:Name="SetupMessage" TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,6" />
+                        <TextBlock Text="Nur Stereo-Ausgabe · Kein Mikrofonzugriff" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,2,0,10" />
+                        <Separator Margin="0,6,0,10" />
+                        <TextBlock FontSize="12" HorizontalAlignment="Center"><Hyperlink NavigateUri="https://vb-audio.com/Cable/" RequestNavigate="LinkNavigate">VB-CABLE von VB-Audio · Donationware</Hyperlink></TextBlock>
+                    </StackPanel>
+                </Expander>
+            </Border>
+            <Button Content="Über Audio Splitter · Lizenzen" Click="AboutClick" HorizontalAlignment="Center" Margin="0,14,0,0" FontSize="12" BorderThickness="0" Background="Transparent" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

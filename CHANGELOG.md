@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3 — 2026-10-18 — Prerelease
+
+- Fix duplicated text and broken buttons after scrolling: move native controls
+  without copying old pixels, then invalidate both the parent and every child.
+- Add 234 real-window repaint regression comparisons for 0/2/5 outputs,
+  100/150/200% layout scaling, window resizing, scrolling, setup expansion,
+  keyboard focus and periodic refresh. CI and release builds run these checks.
+- Document VB-CABLE Windows 11 compatibility despite WIN10 labels in its setup.
+
 ## 0.1.2 — 2026-10-18 — Prerelease
 
 - Fix unattended signature verification: temporarily trust the pinned certificate

@@ -139,6 +139,7 @@ struct Modal {
 
 struct Row { std::string id; HWND toggle, menu, slider; };
 class Window {
+    friend struct WindowRenderingTest;
     HWND window_ = nullptr;
     UINT dpi_ = 96;
     int scroll_ = 0, contentHeight_ = 0, width_ = 640;
@@ -157,8 +158,12 @@ class Window {
     int d(int value) const { return MulDiv(value, dpi_, 96); }
     RECT rect(int x, int y, int w, int h) const { return {d(x), d(y) - scroll_, d(x + w), d(y + h) - scroll_}; }
     void place(HWND control, int x, int y, int w, int h, bool visible = true) {
-        auto r = rect(x, y, w, h); MoveWindow(control, r.left, r.top, r.right - r.left, r.bottom - r.top, TRUE);
-        ShowWindow(control, visible ? SW_SHOWNA : SW_HIDE);
+        auto r = rect(x, y, w, h);
+        // Scrolling moves controls across each other's old bounds. Do not copy
+        // their previous pixels or paint intermediate positions. layout() redraws
+        // the complete parent/child tree once every control has its final bounds.
+        SetWindowPos(control, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     }
     void fonts() {
         for (auto f : fonts_) if (f) DeleteObject(f);
@@ -202,7 +207,9 @@ class Window {
         place(buttons_[sourceId], 387, y + 130, right - 403, 34, expanded_);
         place(buttons_[vendorId], 40, y + 236, width_ - 80, 28, expanded_);
         place(buttons_[aboutId], 65, y + (expanded_ ? 290 : 72), width_ - 130, 30);
-        InvalidateRect(window_, nullptr, FALSE);
+        // WS_CLIPCHILDREN excludes controls from the parent's buffered paint;
+        // invalidating only the parent leaves stale pixels inside moved controls.
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
     }
     void update() {
         if (audio_) snapshot_ = audio_->snapshot();

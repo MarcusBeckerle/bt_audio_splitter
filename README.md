@@ -43,6 +43,11 @@ VB-CABLE kann bei seiner Installation Windows-Standardgeräte ändern, auch die
 Kommunikationseingabe. Danach die Windows-Einstellungen überprüfen. Die App
 selbst öffnet ausschließlich Render-Endpunkte und deren WASAPI-Loopback.
 
+**„OS: WIN10“ im VB-CABLE-Setup:** Diese Beschriftung allein ist kein Hinweis
+auf einen falschen Treiber unter Windows 11. Das unveränderte Herstellerpaket
+unterstützt ausdrücklich Windows 11; siehe
+[VB-CABLE-Handbuch](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf).
+
 ## Bedienung
 
 Der Eingang und die Einrichtung zeigen den Treiberstatus mit Text und Farbe:
@@ -132,7 +137,7 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.2`
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.3`
 kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
 aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
@@ -143,8 +148,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.2-win-x64.exe
-  BT-Audio-Splitter-0.1.2-win-x64.zip
+  BT-Audio-Splitter-0.1.3-win-x64.exe
+  BT-Audio-Splitter-0.1.3-win-x64.zip
   SHA256SUMS.txt
 ```
 
@@ -195,6 +200,16 @@ und die statisch eingebundenen C++-/MinGW-Hilfsroutinen.
 Pause, dauerhafte Entfernung, fünf Geräte, IDs/Unicode/Lautstärken, defekte
 Einstellungen, Pufferverhalten gegen ein Zufalls-Referenzmodell, getrennte
 Verteilung, parallele Zugriffe und atomare Dateiersetzung.
+
+`build.ps1 -UiTests` ergänzt 234 Grafikprüfungen auf einem Windows-Desktop;
+GitHub-CI und Release-Builds führen sie ebenfalls aus. Das separate Testprogramm
+zeigt kurz ein eigenes Fenster mit Beispieldaten, ohne Audiogeräte oder
+Benutzereinstellungen anzufassen. Es vergleicht dessen sichtbare Pixel nach
+Scrollen, Größenänderung, Ein-/Ausklappen und Fokuswechsel mit einem vollständigen
+Neuzeichnen an derselben Position (0/2/5 Ausgaben, 100/150/200% Layout-Skalierung).
+Es liest ausschließlich die Clientfläche dieses Testfensters und speichert keine
+Bildschirmaufnahmen. So werden auch Bildreste erkannt, die in einer statischen
+Vorschau nicht auftreten.
 
 Zusätzlich kann die fertige EXE selbst geprüft werden:
 

@@ -2,6 +2,7 @@
 param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [switch]$Bootstrap,
+    [switch]$UiTests,
     [string]$Version = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -52,6 +53,11 @@ try {
     Invoke-Checked $compiler ($flags + @('native/tests/tests.cpp', 'native/platform.cpp', '-o', "$out/tests.exe", '-lole32', '-luuid', '-lshell32'))
     Invoke-Checked "$out/tests.exe" @()
     Invoke-Checked $compiler ($flags + @('-municode', '-mwindows', 'native/main.cpp', 'native/platform.cpp', 'native/audio.cpp', 'native/setup.cpp', 'native/ui.cpp', "$out/app.res", '-o', "$out/AudioSplitter.exe", '-lole32', '-luuid', '-lpropsys', '-lksuser', '-lcomctl32', '-lgdiplus', '-lshell32', '-lwinhttp', '-lbcrypt', '-lwintrust', '-lavrt'))
+    if ($UiTests) {
+        # Requires a Windows desktop. Captures only the test window, never the desktop.
+        Invoke-Checked $compiler ($flags + @('native/tests/ui_tests.cpp', 'native/platform.cpp', 'native/audio.cpp', 'native/setup.cpp', '-o', "$out/ui-tests.exe", '-lgdi32', '-lole32', '-luuid', '-lpropsys', '-lksuser', '-lcomctl32', '-lgdiplus', '-lshell32', '-lwinhttp', '-lbcrypt', '-lwintrust', '-lavrt'))
+        Invoke-Checked "$out/ui-tests.exe" @()
+    }
     if ($Configuration -eq 'Release' -and (Get-Item -LiteralPath "$out/AudioSplitter.exe").Length -gt 3000000) { throw 'Unexpected executable size regression (> 3 MB).' }
     # Fail packaging if a compiler runtime DLL slipped into the standalone binary.
     $imports = & (Join-Path $toolchain 'bin/llvm-readobj.exe') --coff-imports "$out/AudioSplitter.exe"

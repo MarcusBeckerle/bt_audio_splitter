@@ -75,6 +75,18 @@ struct WindowRenderingTest {
                 window.snapshot_.settings.muted = false; window.update(); verify(window, "master unmute"); ++checks;
                 if (!window.rows_.empty()) {
                     window.scroll(window.d(outputTop - 8));
+                    int savedVolume = window.snapshot_.routes[0].preference.volume;
+                    SendMessageW(window.rows_[0].mute, BM_CLICK, 0, 0);
+                    if (!window.snapshot_.routes[0].preference.muted) throw std::runtime_error("Device mute click failed.");
+                    verify(window, "device mute click"); ++checks;
+                    window.snapshot_.settings.muted = true; window.update();
+                    verify(window, "master plus device mute"); ++checks;
+                    SendMessageW(window.rows_[0].mute, BM_CLICK, 0, 0);
+                    if (window.snapshot_.routes[0].preference.muted || !window.snapshot_.settings.muted || window.snapshot_.routes[0].preference.volume != savedVolume)
+                        throw std::runtime_error("Device unmute changed slider or master mute.");
+                    verify(window, "device unmute under master mute"); ++checks;
+                    window.snapshot_.settings.muted = false; window.update();
+                    verify(window, "device and master restored"); ++checks;
                     HWND slider = window.rows_[0].slider;
                     SetFocus(slider);
                     RECT thumb{}, bounds{};

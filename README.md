@@ -64,7 +64,8 @@ Windows-Geräte werden nicht als installierter Treiber gewertet.
 | Verbinden | Wiedergabe aktivieren und bei erneuter Verfügbarkeit automatisch fortsetzen. |
 | Pausieren | Stream beenden; bleibt auch nach Aus-/Einschalten und App-Neustart pausiert. |
 | Lautstärke | Nur diesen weitergeleiteten Stream regeln; Wert wird gespeichert. |
-| Mute all / Unmute all | Alle Ausgaben stummschalten, ohne ihre Einzelpegel oder Verbindungen zu ändern. Auch der globale Mute-Zustand wird gespeichert. |
+| Lautsprechersymbol neben dem Regler | Einzelne Ausgabe stumm-/einschalten. Prozentwert und Verbindung bleiben erhalten; die Stummschaltung wird gespeichert. Per Tab und Leertaste bedienbar. |
+| Mute all / Unmute all | Alle Ausgaben stummschalten, ohne ihre Einzelpegel oder Verbindungen zu ändern. Auch der globale Mute-Zustand wird gespeichert. Unmute all erhält einzeln stummgeschaltete Ausgaben; Regleränderungen heben keine Stummschaltung auf. |
 | ⋯ → Zeitabgleich | Schnellere Ausgaben zusätzlich um 0–1000 ms verzögern; Einstellung pro Gerät speichern. |
 | ⋯ → Geräteinformationen | Vollständiger Windows-Name, Gerätekennung und Status/Fehler. |
 | ⋯ → Gerät entfernen | Stream beenden und gespeicherte Zuordnung löschen. Windows-Kopplung bleibt bestehen. |
@@ -82,7 +83,7 @@ einmal pro Sekunde geprüft; Aufbau eines neuen Audiostreams kommt hinzu.
 Beim Schließen der App endet die Weiterleitung; sie läuft nicht versteckt im Tray.
 
 **Frequenzanzeigen:** Oben unter **Virtual Input**, bei jeder Ausgabe direkt unter
-dem Lautstärkeregler. 48 segmentierte grün/gelb/orange Balken zeigen logarithmische
+dem Lautstärkeregler. 48 freistehende LED-Balken mit dezentem Glow und weichem Grün/Gelb/Orange/Rot-Verlauf zeigen logarithmische
 Frequenzbänder von 40 Hz bis 20 kHz auf einer gemeinsamen Skala von −72 bis 0 dBFS.
 Bei niedrigeren Abtastraten endet das Signal an deren Nyquist-Grenze. Der Eingang
 wird mit einem Hann-Fenster und einer 2048-Punkt-FFT getrennt für beide Stereo-
@@ -173,7 +174,7 @@ Der Compilerdownload ist ca. 191 MB; er wird **nicht** mit der App ausgeliefert.
 
 Bei heruntergeladenem Skript gegebenenfalls nach Durchsicht `Unblock-File
 .\build.ps1` ausführen. Keine globale Änderung der Ausführungsrichtlinie nötig.
-Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.4`
+Lokale Builds verwenden die Datei `VERSION`. Mit `build.ps1 -Version 0.1.5`
 kann die Version überschrieben werden. Release-Builds übernehmen sie automatisch
 aus dem GitHub-Tag; Windows-Metadaten und „Über“-Dialog werden gemeinsam erzeugt.
 
@@ -184,8 +185,8 @@ Es werden keine EXE-Packer verwendet. Release-Dateien:
 
 ```text
 artifacts/release/
-  BT-Audio-Splitter-0.1.4-win-x64.exe
-  BT-Audio-Splitter-0.1.4-win-x64.zip
+  BT-Audio-Splitter-0.1.5-win-x64.exe
+  BT-Audio-Splitter-0.1.5-win-x64.zip
   SHA256SUMS.txt
 ```
 
@@ -233,13 +234,13 @@ und die statisch eingebundenen C++-/MinGW-Hilfsroutinen.
 
 ## Tests und Abnahme
 
-`build.ps1` führt 23 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
+`build.ps1` führt 25 automatisierte Tests aus: Zustandsregeln für Wiederkehr und
 Pause, dauerhafte Entfernung, fünf Geräte, IDs/Unicode/Lautstärken, defekte
 Einstellungen, Pufferverhalten gegen ein Zufalls-Referenzmodell, getrennte
 Verteilung, parallele Zugriffe und atomare Dateiersetzung, logarithmische Pegel,
 Master-Mute, Verzögerung, Migration alter Einstellungen und Spektrumsanalyse.
 
-`build.ps1 -UiTests` ergänzt 474 Grafikprüfungen auf einem Windows-Desktop;
+`build.ps1 -UiTests` ergänzt 522 Grafikprüfungen auf einem Windows-Desktop;
 GitHub-CI und Release-Builds führen sie ebenfalls aus. Das separate Testprogramm
 zeigt kurz ein eigenes Fenster mit Beispieldaten, ohne Audiogeräte oder
 Benutzereinstellungen anzufassen. Es vergleicht dessen sichtbare Pixel nach

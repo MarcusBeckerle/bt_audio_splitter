@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5 — 2026-10-18 — Prerelease
+
+- Floating spectrum LEDs with a subtle glow and a smooth green/yellow/orange/red
+  palette, without a dark panel or inactive grid.
+- Speaker icon on Mute all / Unmute all. Each output's speaker is now a keyboard-
+  accessible mute button that preserves its slider volume and connection.
+- Persist individual mute independently of master mute; unmuting all preserves
+  individually muted outputs. Settings versions 1 and 2 migrate to version 3.
+- Test device mute persistence, effective audio gain, settings migration and
+  repainting the new buttons: 25 core tests and 522 UI image comparisons.
+
 ## 0.1.4 — 2026-10-18 — Prerelease
 
 - Fix volume-thumb trails by invalidating the full custom-painted slider before

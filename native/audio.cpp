@@ -254,12 +254,12 @@ public:
             auto o = std::find_if(settings_.outputs.begin(), settings_.outputs.end(), [&](const auto& p) { return p.id == it->first; });
             const auto* d = find(devices_, it->first);
             if (!source_ || o == settings_.outputs.end() || decide(o->enabled, d && !d->cable && !d->handsFree, d && d->available, inputOK) != RouteState::Playing) it = sinks_.erase(it);
-            else { it->second->volume(settings_.muted ? 0 : o->volume); it->second->delay(o->delayMs); ++it; }
+            else { it->second->volume(effectiveVolume(settings_, *o)); it->second->delay(o->delayMs); ++it; }
         }
         for (const auto& o : settings_.outputs) {
             const auto* d = find(devices_, o.id);
             if (!source_ || !source_->rate() || decide(o.enabled, d && !d->cable && !d->handsFree, d && d->available, inputOK) != RouteState::Playing || !allowRetry || sinks_.contains(o.id)) continue;
-            try { sinks_[o.id] = std::make_unique<OutputSession>(o.id, source_->rate(), settings_.muted ? 0 : o.volume, o.delayMs); routeErrors_.erase(o.id); }
+            try { sinks_[o.id] = std::make_unique<OutputSession>(o.id, source_->rate(), effectiveVolume(settings_, o), o.delayMs); routeErrors_.erase(o.id); }
             catch (const std::exception& e) { routeErrors_[o.id] = e.what(); logError(e.what()); }
         }
         std::vector<std::shared_ptr<AudioPipe>> pipes;

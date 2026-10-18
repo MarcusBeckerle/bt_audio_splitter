@@ -170,7 +170,7 @@ struct Modal {
     }
 };
 
-struct Row { std::string id; HWND toggle, menu, slider; };
+struct Row { std::string id; HWND toggle, menu, slider, mute; };
 class Window {
     friend struct WindowRenderingTest;
     HWND window_ = nullptr;
@@ -207,7 +207,7 @@ class Window {
         fonts_ = {font(14, FW_NORMAL, dpi_), font(12, FW_NORMAL, dpi_), font(18, FW_SEMIBOLD, dpi_), font(30, FW_SEMIBOLD, dpi_)};
         iconFont_ = CreateFontW(-d(24), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
         for (auto& [id, control] : buttons_) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(fonts_[0]), TRUE);
-        for (auto& r : rows_) for (auto control : {r.toggle, r.menu, r.slider}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(fonts_[0]), TRUE);
+        for (auto& r : rows_) for (auto control : {r.toggle, r.menu, r.mute, r.slider}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(fonts_[0]), TRUE);
     }
     int rowsBottom() const { return outputTop + (rows_.empty() ? 75 : static_cast<int>(rows_.size()) * outputStep); }
     std::pair<std::wstring, COLORREF> inputStatus() const {
@@ -234,6 +234,7 @@ class Window {
             auto& r = rows_[i]; int y = outputTop + static_cast<int>(i) * outputStep;
             place(r.toggle, right - 156, y + 18, 100, 34); place(r.menu, right - 48, y + 18, 32, 34);
             place(r.slider, 76, y + 105, width_ - 174, 30);
+            place(r.mute, 38, y + 103, 34, 34);
         }
         int y = setupTop();
         place(buttons_[setupId], 40, y + 12, width_ - 80, 34);
@@ -254,10 +255,11 @@ class Window {
         bool changed = rows_.size() != snapshot_.routes.size();
         if (!changed) for (std::size_t i = 0; i < rows_.size(); ++i) if (rows_[i].id != snapshot_.routes[i].preference.id) changed = true;
         if (changed) {
-            for (auto& r : rows_) { DestroyWindow(r.toggle); DestroyWindow(r.menu); DestroyWindow(r.slider); } rows_.clear();
+            for (auto& r : rows_) { DestroyWindow(r.toggle); DestroyWindow(r.menu); DestroyWindow(r.slider); DestroyWindow(r.mute); } rows_.clear();
             for (std::size_t i = 0; i < snapshot_.routes.size(); ++i) {
                 int base = 100 + static_cast<int>(i) * 3;
-                Row r{snapshot_.routes[i].preference.id, button(window_, base, L"Pausieren"), button(window_, base + 1, L"⋯"), nullptr};
+                Row r{snapshot_.routes[i].preference.id, button(window_, base, L"Pausieren"), button(window_, base + 1, L"⋯"), nullptr,
+                    button(window_, 200 + static_cast<int>(i), L"Ausgabe stummschalten")};
                 r.slider = CreateWindowExW(0, TRACKBAR_CLASSW, L"Lautstärke", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_NOTICKS, 0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(base + 2)), appInstance, nullptr);
                 SendMessageW(r.slider, TBM_SETRANGE, FALSE, MAKELPARAM(0, 100)); SendMessageW(r.slider, TBM_SETPAGESIZE, 0, 5);
                 SetWindowSubclass(r.slider, focusProc, 1, 0);
@@ -265,7 +267,7 @@ class Window {
                 rows_.push_back(r);
             }
             HWND previous = buttons_[addId];
-            for (const auto& row : rows_) for (HWND control : {row.toggle, row.menu, row.slider}) {
+            for (const auto& row : rows_) for (HWND control : {row.toggle, row.menu, row.mute, row.slider}) {
                 SetWindowPos(control, previous, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); previous = control;
             }
             for (int id : {setupId, driverId, bluetoothId, renameId, soundId, sourceId, vendorId, aboutId}) {
@@ -276,6 +278,7 @@ class Window {
         for (std::size_t i = 0; i < rows_.size(); ++i) {
             const auto& preference = snapshot_.routes[i].preference;
             setText(rows_[i].toggle, preference.enabled ? L"Pausieren" : L"Verbinden");
+            setText(rows_[i].mute, (preference.muted ? L"Stummschaltung aufheben: " : L"Ausgabe stummschalten: ") + wide(preference.name));
             // Do not overwrite a slider while it owns focus/capture; the worker may be one snapshot behind.
             if (GetFocus() != rows_[i].slider && GetCapture() != rows_[i].slider)
                 SendMessageW(rows_[i].slider, TBM_SETPOS, TRUE, preference.volume);
@@ -290,28 +293,50 @@ class Window {
         layout();
     }
     void drawSpectrum(HDC dc, const Spectrum& values, RECT bounds) {
-        rounded(dc, bounds, RGB(10, 15, 19), static_cast<float>(d(4)));
         Gdiplus::Graphics graphics(dc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        graphics.SetClip(Gdiplus::Rect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top));
         const float left = static_cast<float>(bounds.left + d(5)), top = static_cast<float>(bounds.top + d(4));
         const float width = static_cast<float>(bounds.right - bounds.left - d(10));
         const float height = static_cast<float>(bounds.bottom - bounds.top - d(8));
         constexpr int segments = 12;
         const float column = width / spectrumBands, step = height / segments;
+        // Interpolate the full height's palette, shared by every input/output.
+        // Only live LEDs are painted; the card shows through the empty spectrum.
+        auto colorAt = [](float position, BYTE alpha) {
+            constexpr std::array<std::array<int, 3>, 5> palette{{
+                {58, 195, 89}, {134, 208, 54}, {231, 211, 44}, {249, 152, 48}, {239, 72, 65}}};
+            float scaled = std::clamp(position, 0.0f, 1.0f) * 4;
+            int index = std::min(3, static_cast<int>(scaled)); float mix = scaled - index;
+            auto channel = [&](int c) { return static_cast<BYTE>(palette[index][c] * (1 - mix) + palette[index + 1][c] * mix); };
+            return Gdiplus::Color(alpha, channel(0), channel(1), channel(2));
+        };
         for (std::size_t band = 0; band < spectrumBands; ++band) {
             int lit = static_cast<int>(std::ceil(std::clamp(values[band], 0.0f, 1.0f) * segments));
-            for (int segment = 0; segment < segments; ++segment) {
-                Gdiplus::Color color = segment >= lit ? Gdiplus::Color(255, 24, 34, 32)
-                    : segment >= 10 ? Gdiplus::Color(255, 255, 135, 35)
-                    : segment >= 8 ? Gdiplus::Color(255, 218, 224, 35)
-                    : Gdiplus::Color(255, 75, 220, 70);
-                Gdiplus::SolidBrush brush(color);
-                graphics.FillRectangle(&brush, left + column * band, top + height - step * (segment + 1),
-                    std::max(1.0f, column - d(2)), std::max(1.0f, step - d(1)));
+            if (!lit) continue;
+            float center = left + column * (band + .5f);
+            float bottom = top + height - step * .5f, peak = bottom - step * (lit - 1);
+            // Three translucent rounded layers form a small halo without a
+            // blur bitmap/allocation for every bar on every 100-ms refresh.
+            for (int layer = 3; layer >= 1; --layer) {
+                Gdiplus::LinearGradientBrush glow(Gdiplus::PointF(center, bottom + step), Gdiplus::PointF(center, peak - step),
+                    colorAt(0, 9), colorAt(static_cast<float>(lit - 1) / (segments - 1), 13));
+                Gdiplus::Pen halo(&glow, column - d(3) + d(layer * 2));
+                halo.SetStartCap(Gdiplus::LineCapRound); halo.SetEndCap(Gdiplus::LineCapRound);
+                graphics.DrawLine(&halo, center, bottom, center, peak - .1f);
+            }
+            for (int segment = 0; segment < lit; ++segment) {
+                float y = bottom - step * segment;
+                Gdiplus::Pen led(colorAt(static_cast<float>(segment) / (segments - 1), 255), std::max(1.0f, step - d(1)));
+                led.SetStartCap(Gdiplus::LineCapRound); led.SetEndCap(Gdiplus::LineCapRound);
+                float half = std::max(.5f, (column - d(4) - step + d(1)) * .5f);
+                graphics.DrawLine(&led, center - half, y, center + half, y);
             }
         }
         // Silence/mute has no lit bars and a single flat baseline.
-        Gdiplus::Pen baseline(Gdiplus::Color(255, 56, 116, 62));
+        Gdiplus::Pen baseline(Gdiplus::Color(100, 150, 171, 158));
         graphics.DrawLine(&baseline, left, top + height, left + width, top + height);
+        graphics.ResetClip();
         RECT label{bounds.left, bounds.bottom + d(3), bounds.right, bounds.bottom + d(21)};
         text(dc, fonts_[1], L"40 Hz", label, muted);
         text(dc, fonts_[1], L"1 kHz", label, muted, DT_CENTER | DT_SINGLELINE);
@@ -344,10 +369,9 @@ class Window {
             if (!r.error.empty()) detail = wide(r.error);
             else detail = r.preference.enabled ? L"Automatisch verbinden · Zeitabgleich: +" + std::to_wstring(r.preference.delayMs) + L" ms" : L"Verbindung bleibt pausiert, auch nach einem Neustart.";
             text(dc, fonts_[1], detail, rect(40, y + 78, w - 32, 20), muted);
-            text(dc, iconFont_, L"\xE767", rect(40, y + 109, 30, 30), muted);
             int volume = static_cast<int>(SendMessageW(rows_[i].slider, TBM_GETPOS, 0, 0));
             text(dc, fonts_[0], std::to_wstring(volume) + L" %", rect(width_ - 88, y + 111, 48, 22), muted, DT_RIGHT | DT_SINGLELINE);
-            drawSpectrum(dc, outputSpectrum(snapshot_.spectrum, volume, r.state == RouteState::Playing && !snapshot_.settings.muted), rect(40, y + 146, w - 32, 62));
+            drawSpectrum(dc, outputSpectrum(snapshot_.spectrum, volume, r.state == RouteState::Playing && !snapshot_.settings.muted && !r.preference.muted), rect(40, y + 146, w - 32, 62));
         }
         text(dc, fonts_[1], L"Lautstärke und Verbindungsstatus werden gespeichert.", rect(26, rowsBottom() + 8, w - 4, 35), muted, DT_WORDBREAK);
         if (!snapshot_.error.empty()) {
@@ -367,6 +391,18 @@ class Window {
         SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
     }
     void drawButton(const DRAWITEMSTRUCT& item) {
+        if (item.CtlID >= 200 && item.CtlID < 200 + rows_.size()) {
+            const auto& preference = snapshot_.routes[item.CtlID - 200].preference;
+            bool silent = preference.muted || snapshot_.settings.muted || preference.volume == 0;
+            FillRect(item.hDC, &item.rcItem, whiteBrush_);
+            if (item.itemState & ODS_SELECTED) rounded(item.hDC, item.rcItem, background, static_cast<float>(d(6)));
+            text(item.hDC, iconFont_, silent ? L"\xE74F" : L"\xE767", item.rcItem,
+                preference.muted ? RGB(193, 52, 60) : muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
+                RECT focus = item.rcItem; InflateRect(&focus, -d(2), -d(2)); DrawFocusRect(item.hDC, &focus);
+            }
+            return;
+        }
         bool primary = item.CtlID == addId || item.CtlID == muteId, disabled = item.itemState & ODS_DISABLED, pushed = item.itemState & ODS_SELECTED;
         bool plain = item.CtlID == setupId || item.CtlID == aboutId || item.CtlID == vendorId;
         FillRect(item.hDC, &item.rcItem, item.CtlID == aboutId || primary ? bgBrush_ : whiteBrush_);
@@ -374,6 +410,12 @@ class Window {
         if (item.CtlID == muteId && snapshot_.settings.muted) fill = pushed ? RGB(155, 35, 44) : RGB(193, 52, 60);
         rounded(item.hDC, item.rcItem, fill, static_cast<float>(d(6)), plain || primary ? CLR_INVALID : RGB(215, 222, 231));
         RECT bounds = item.rcItem; InflateRect(&bounds, -d(5), 0);
+        if (item.CtlID == muteId) {
+            RECT icon = item.rcItem; icon.left += d(12); icon.right = icon.left + d(26);
+            text(item.hDC, iconFont_, snapshot_.settings.muted ? L"\xE74F" : L"\xE767", icon,
+                RGB(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            bounds.left += d(34);
+        }
         text(item.hDC, item.CtlID == setupId ? fonts_[2] : item.CtlID == vendorId || item.CtlID == aboutId ? fonts_[1] : fonts_[0], controlText(item.hwndItem), bounds,
             disabled ? RGB(142, 151, 163) : primary ? RGB(255, 255, 255) : item.CtlID == vendorId ? blue : ink,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX | (item.CtlID == setupId ? DT_LEFT : DT_CENTER));
@@ -439,6 +481,13 @@ class Window {
     void action(int id) {
         if (id == addId) choose(false);
         else if (id == muteId && audio_) audio_->command([](Settings& s, bool&) { s.muted = !s.muted; });
+        else if (id >= 200 && id < 200 + static_cast<int>(rows_.size())) {
+            auto endpointId = rows_[id - 200].id;
+            if (audio_) audio_->command([endpointId](Settings& s, bool&) {
+                for (auto& o : s.outputs) if (o.id == endpointId) o.muted = !o.muted;
+            });
+            else if (preview_) { auto& o = snapshot_.routes[id - 200].preference; o.muted = !o.muted; update(); }
+        }
         else if (id == setupId) { expanded_ = !expanded_; update(); }
         else if (id == bluetoothId) openLink(window_, L"ms-settings:bluetooth");
         else if (id == soundId) openLink(window_, L"ms-settings:sound");

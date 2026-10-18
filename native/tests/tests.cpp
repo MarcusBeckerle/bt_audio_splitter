@@ -127,6 +127,29 @@ int main() {
         restored.muted = false;
         require(restored.outputs[0].volume == 35 && restored.outputs[1].volume == 80);
     });
+    test("Device mute survives reload and master unmute without changing slider or other outputs", [] {
+        Settings s{"cable", {{"a", "One", 37, true, 120, true}, {"b", "Two", 82, true}}};
+        auto restored = deserialize(serialize(s));
+        require(restored.outputs[0].muted && restored.outputs[0].volume == 37 && restored.outputs[0].delayMs == 120);
+        require(effectiveVolume(restored, restored.outputs[0]) == 0 && effectiveVolume(restored, restored.outputs[1]) == 82);
+        restored.muted = true;
+        require(effectiveVolume(restored, restored.outputs[1]) == 0);
+        restored.muted = false;
+        require(effectiveVolume(restored, restored.outputs[0]) == 0);
+        restored.outputs[0].muted = false;
+        AudioPipe pipe(4, effectiveVolume(restored, restored.outputs[0]));
+        float in[]{.5f, -.5f}, out[2]; pipe.push(in, 1); pipe.pop(out, 1);
+        require(out[0] == .5f * volumeGain(37) && out[1] == -.5f * volumeGain(37));
+        restored.outputs[0].muted = true; pipe.volume = effectiveVolume(restored, restored.outputs[0]);
+        pipe.push(in, 1); pipe.pop(out, 1); require(out[0] == 0 && out[1] == 0);
+    });
+    test("Version 2 gains and master mute migrate; invalid device mute flags are rejected", [] {
+        auto migrated = deserialize("BT_AUDIO_SPLITTER 2\n\"cable\"\n1\n\"a\" \"One\" 37 1 120\n1\n");
+        require(migrated.muted && !migrated.outputs[0].muted && migrated.outputs[0].volume == 37 && migrated.outputs[0].delayMs == 120);
+        for (auto flag : {"-1", "2", "missing"}) rejects([&] {
+            deserialize(std::string("BT_AUDIO_SPLITTER 3\n\"cable\"\n1\n\"a\" \"One\" 37 1 120 ") + flag + "\n0\n");
+        });
+    });
     test("Extra delay preserves stereo frames exactly, including the silent tail", [] {
         AudioPipe pipe(8, 100); pipe.delayFrames(3);
         float pulse[]{.75f, -.25f}, out[2];

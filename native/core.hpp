@@ -22,6 +22,7 @@ struct Output {
     int volume = 70;
     bool enabled = true;
     int delayMs = 0;
+    bool muted = false;
 };
 struct Settings {
     std::string source;
@@ -40,12 +41,17 @@ struct Settings {
     }
 };
 
+// Master mute and device mute are independent gates; neither changes the saved slider.
+inline int effectiveVolume(const Settings& settings, const Output& output) {
+    return settings.muted || output.muted ? 0 : output.volume;
+}
+
 // Versioned, UTF-8 text with quoted strings. Endpoint IDs, not friendly names, are identities.
 inline std::string serialize(const Settings& s) {
     std::ostringstream out;
-    out << "BT_AUDIO_SPLITTER 2\n" << std::quoted(s.source) << '\n' << s.outputs.size() << '\n';
+    out << "BT_AUDIO_SPLITTER 3\n" << std::quoted(s.source) << '\n' << s.outputs.size() << '\n';
     for (const auto& o : s.outputs)
-        out << std::quoted(o.id) << ' ' << std::quoted(o.name) << ' ' << o.volume << ' ' << o.enabled << ' ' << o.delayMs << '\n';
+        out << std::quoted(o.id) << ' ' << std::quoted(o.name) << ' ' << o.volume << ' ' << o.enabled << ' ' << o.delayMs << ' ' << o.muted << '\n';
     out << s.muted << '\n';
     return out.str();
 }
@@ -56,7 +62,7 @@ inline Settings deserialize(const std::string& data) {
     int version = 0;
     std::size_t count = 0;
     Settings s;
-    if (!(in >> marker >> version) || marker != "BT_AUDIO_SPLITTER" || (version != 1 && version != 2) ||
+    if (!(in >> marker >> version) || marker != "BT_AUDIO_SPLITTER" || (version < 1 || version > 3) ||
         !(in >> std::quoted(s.source) >> count) || count > maxOutputs)
         throw std::runtime_error("Ungültige Einstellungsdatei.");
     for (std::size_t i = 0; i < count; ++i) {
@@ -66,11 +72,16 @@ inline Settings deserialize(const std::string& data) {
             (enabled != 0 && enabled != 1) || o.volume < 0 || o.volume > 100)
             throw std::runtime_error("Ungültige Geräteeinstellung.");
         o.enabled = enabled != 0;
-        if (version == 2 && (!(in >> o.delayMs) || o.delayMs < 0 || o.delayMs > maxOutputDelayMs))
+        if (version >= 2 && (!(in >> o.delayMs) || o.delayMs < 0 || o.delayMs > maxOutputDelayMs))
             throw std::runtime_error("Ungültiger Audio-Zeitabgleich.");
+        if (version >= 3) {
+            int muted = 0;
+            if (!(in >> muted) || (muted != 0 && muted != 1)) throw std::runtime_error("Ungültige Geräte-Stummschaltung.");
+            o.muted = muted != 0;
+        }
         s.add(std::move(o));
     }
-    if (version == 2) {
+    if (version >= 2) {
         int muted = 0;
         if (!(in >> muted) || (muted != 0 && muted != 1)) throw std::runtime_error("Ungültige Stummschaltung.");
         s.muted = muted != 0;

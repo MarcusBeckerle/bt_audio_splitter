@@ -1,6 +1,9 @@
 * text=auto
-*.cs text eol=lf
-*.xaml text eol=lf
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.rc text eol=lf
+*.manifest text eol=lf
+*.yml text eol=lf
 *.md text eol=lf
 *.ps1 text eol=crlf
 *.png binary

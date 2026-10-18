@@ -1,78 +1,61 @@
 [CmdletBinding()]
-param(
-    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
-    [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version = '0.1.0',
-    [switch]$Bootstrap
-)
-
+param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release', [switch]$Bootstrap)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$toolsDir = Join-Path $root '.tools'
-$localDotnet = Join-Path $toolsDir 'dotnet\dotnet.exe'
-
-# Optional local SDK bootstrap: never installs tools globally or on an end user's PC.
-if ($Bootstrap -and -not (Test-Path -LiteralPath $localDotnet)) {
-    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-    $archive = Join-Path $toolsDir 'dotnet-sdk.zip'
-    $uri = 'https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.402/dotnet-sdk-10.0.402-win-x64.zip'
-    $sha512 = 'ae4fd528cb7e9f6af6aaf7de36715a69f761f183744f1bb3025d19f5a92447090ec561410e46266c1d10a63781ed6f3de771760bc76c876d87daabc367b898cd'
-    Write-Host 'Downloading the official .NET SDK into .tools ...'
-    Invoke-WebRequest -Uri $uri -OutFile $archive -UseBasicParsing
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA512).Hash -ne $sha512) { throw 'SDK checksum mismatch.' }
-    Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $toolsDir 'dotnet') -Force
+$version = '0.1.0'
+$toolchain = Join-Path $root '.tools/llvm-mingw-20261006-ucrt-x86_64'
+$compiler = Join-Path $toolchain 'bin/clang++.exe'
+# Build tools stay local. End users only need the resulting EXE.
+if (-not (Test-Path -LiteralPath $compiler)) {
+    if (-not $Bootstrap) { throw 'Run ./build.ps1 -Bootstrap to download the pinned portable C++ toolchain.' }
+    New-Item -ItemType Directory -Force -Path (Join-Path $root '.tools') | Out-Null
+    $archive = Join-Path $root '.tools/llvm-mingw.zip'
+    $sha256 = '317492c456aa27ee607a5919f1d2d38dcdc1112516a24d0bf4b00d078f52d17a'
+    if (-not (Test-Path -LiteralPath $archive) -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $sha256) {
+        Write-Host 'Downloading official LLVM-MinGW 20261006 into .tools ...'
+        Invoke-WebRequest 'https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-x86_64.zip' -OutFile $archive -UseBasicParsing
+    }
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $sha256) { throw 'Compiler checksum mismatch.' }
+    Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $root '.tools') -Force
 }
-
-if (Test-Path -LiteralPath $localDotnet) { $dotnet = $localDotnet }
-else {
-    $command = Get-Command dotnet -ErrorAction SilentlyContinue
-    if ($null -eq $command) { throw 'Install the .NET 10 SDK, or run build.ps1 -Bootstrap.' }
-    $dotnet = $command.Source
+function Invoke-Checked([string]$Program, [string[]]$Arguments) {
+    & $Program @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE" }
 }
-
-function Invoke-Dotnet {
-    & $dotnet @args
-    if ($LASTEXITCODE -ne 0) { throw "dotnet failed with exit code $LASTEXITCODE" }
-}
-
 Push-Location $root
 try {
-    $env:DOTNET_CLI_HOME = Join-Path $toolsDir 'cli'
-    $env:NUGET_PACKAGES = Join-Path $toolsDir 'nuget'
-    $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-    $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
-
-    $project = 'src\BtAudioSplitter\BtAudioSplitter.csproj'
-    $tests = 'tests\BtAudioSplitter.Tests\BtAudioSplitter.Tests.csproj'
-    Invoke-Dotnet restore $project -r win-x64 --locked-mode
-    Invoke-Dotnet restore $tests --locked-mode
-    Invoke-Dotnet run --project $tests -c $Configuration --no-restore '-p:UseSharedCompilation=false'
-
-    $publish = Join-Path $root "artifacts\publish\$Version\win-x64"
-    Invoke-Dotnet publish $project -c $Configuration -r win-x64 --self-contained true --no-restore `
-        "-p:Version=$Version" '-p:UseSharedCompilation=false' -o $publish
-
-    # Symbol files are useful locally, but are not needed in the portable user package.
-    Get-ChildItem -LiteralPath $publish -Filter '*.pdb' -File | ForEach-Object {
-        Remove-Item -LiteralPath $_.FullName
-    }
-
-    # Notices are embedded in the EXE, and also included as readable files in the ZIP.
-    foreach ($file in @('README.md', 'LICENSE', 'NOTICE', 'LICENSING.md', 'COMMERCIAL-LICENSE.md', 'THIRD-PARTY-NOTICES.md', 'CHANGELOG.md')) {
-        Copy-Item -LiteralPath (Join-Path $root $file) -Destination $publish -Force
-    }
-    Copy-Item -LiteralPath (Join-Path $root 'licenses') -Destination $publish -Recurse -Force
-
-    $release = Join-Path $root 'artifacts\release'
-    New-Item -ItemType Directory -Force -Path $release | Out-Null
-    $name = "BT-Audio-Splitter-$Version-win-x64"
-    $zip = Join-Path $release "$name.zip"
-    $exe = Join-Path $release "$name.exe"
-    Copy-Item -LiteralPath (Join-Path $publish 'BT Audio Splitter.exe') -Destination $exe -Force
-    Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $zip -Force
-    $hashes = foreach ($file in @($exe, $zip)) {
-        '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), [IO.Path]::GetFileName($file)
-    }
-    $hashes | Set-Content -LiteralPath (Join-Path $release "SHA256SUMS-$Version.txt") -Encoding ascii
-    Write-Host "Release ready: $release"
-}
-finally { Pop-Location }
+    $out = Join-Path $root 'artifacts/native'
+    $release = Join-Path $root 'artifacts/release'
+    $package = Join-Path $out "BT-Audio-Splitter-$version-win-x64"
+    # Only replace our exact generated package directory, never arbitrary paths.
+    $resolvedPackage = [IO.Path]::GetFullPath($package)
+    if (-not $resolvedPackage.StartsWith([IO.Path]::GetFullPath($out) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe package directory.' }
+    if (Test-Path -LiteralPath $resolvedPackage) { Remove-Item -LiteralPath $resolvedPackage -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $out, $release, $package | Out-Null
+    $documents = @('LICENSE', 'NOTICE', 'LICENSING.md', 'COMMERCIAL-LICENSE.md', 'THIRD-PARTY-NOTICES.md')
+    $licenses = @(Get-ChildItem (Join-Path $root 'licenses') -File | Sort-Object Name)
+    $text = (($documents + @($licenses.FullName)) | ForEach-Object { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $_)) + "`r`n`r`n" }) -join ''
+    [IO.File]::WriteAllText((Join-Path $out 'licenses.txt'), $text, [Text.UTF8Encoding]::new($false))
+    Invoke-Checked (Join-Path $toolchain 'bin/x86_64-w64-mingw32-windres.exe') @('-I', 'native', 'native/app.rc', "$out/app.res")
+    $flags = @('-std=c++20', '-D_WIN32_WINNT=0x0A00', '-Wall', '-Wextra', '-Werror', '-static', '-fstack-protector-strong', '-Wl,--nxcompat,--dynamicbase,--high-entropy-va')
+    if ($Configuration -eq 'Release') { $flags += @('-O2', '-s', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections') }
+    else { $flags += @('-O0', '-g') }
+    Invoke-Checked $compiler ($flags + @('native/tests/tests.cpp', 'native/platform.cpp', '-o', "$out/tests.exe", '-lole32', '-luuid', '-lshell32'))
+    Invoke-Checked "$out/tests.exe" @()
+    Invoke-Checked $compiler ($flags + @('-municode', '-mwindows', 'native/main.cpp', 'native/platform.cpp', 'native/audio.cpp', 'native/setup.cpp', 'native/ui.cpp', "$out/app.res", '-o', "$out/AudioSplitter.exe", '-lole32', '-luuid', '-lpropsys', '-lksuser', '-lcomctl32', '-lgdiplus', '-lshell32', '-lwinhttp', '-lbcrypt', '-lwintrust', '-lavrt'))
+    if ($Configuration -eq 'Release' -and (Get-Item -LiteralPath "$out/AudioSplitter.exe").Length -gt 3000000) { throw 'Unexpected executable size regression (> 3 MB).' }
+    # Fail packaging if a compiler runtime DLL slipped into the standalone binary.
+    $imports = & (Join-Path $toolchain 'bin/llvm-readobj.exe') --coff-imports "$out/AudioSplitter.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect executable dependencies.' }
+    if (($imports -join "`n") -match '(?i)(libc\+\+|libunwind|libwinpthread|vcruntime|msvcp|libgcc).*\.dll') { throw 'Unexpected external runtime dependency.' }
+    $imports | Set-Content -LiteralPath "$out/imports.txt" -Encoding UTF8
+    Copy-Item -LiteralPath "$out/AudioSplitter.exe" -Destination "$package/AudioSplitter.exe" -Force
+    foreach ($file in ($documents + @('README.md', 'CHANGELOG.md'))) { Copy-Item -LiteralPath $file -Destination $package -Force }
+    Copy-Item -LiteralPath 'licenses' -Destination $package -Recurse -Force
+    $name = "BT-Audio-Splitter-$version-win-x64"
+    Copy-Item -LiteralPath "$out/AudioSplitter.exe" -Destination "$release/$name.exe" -Force
+    Compress-Archive -Path "$package/*" -DestinationPath "$release/$name.zip" -Force
+    $hashes = @("$name.exe", "$name.zip") | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath "$release/$_" -Algorithm SHA256).Hash.ToLowerInvariant(), $_ }
+    [IO.File]::WriteAllLines("$release/SHA256SUMS.txt", $hashes, [Text.UTF8Encoding]::new($false))
+    Get-Item -LiteralPath "$release/$name.exe", "$release/$name.zip" | Select-Object Name, Length
+} finally { Pop-Location }

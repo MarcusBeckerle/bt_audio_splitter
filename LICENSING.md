@@ -50,8 +50,8 @@ kommerzielle Vereinbarung abzuschließen.
 
 ## Fremdkomponenten
 
-Die Projektlizenz gilt nicht anstelle der jeweiligen Lizenzen von NAudio,
-.NET oder VB-CABLE. Deren Lizenz- und Urheberhinweise bleiben eigenständig.
+Die Projektlizenz gilt nicht anstelle der jeweiligen Lizenzen der LLVM-/MinGW-
+Laufzeitkomponenten oder von VB-CABLE. Deren Hinweise bleiben eigenständig.
 Insbesondere gelten für die Nutzung und Weitergabe von VB-CABLE die Bedingungen
 von VB-Audio; eine Lizenz für BT Audio Splitter ersetzt diese nicht.
 

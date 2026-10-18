@@ -1,0 +1,27 @@
+#include <windows.h>
+1 ICON "app.ico"
+1 RT_MANIFEST "app.manifest"
+200 RCDATA "../artifacts/native/licenses.txt"
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Marcus Beckerle"
+            VALUE "FileDescription", "BT Audio Splitter"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "ProductName", "BT Audio Splitter"
+            VALUE "ProductVersion", "0.1.0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 Marcus Beckerle"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

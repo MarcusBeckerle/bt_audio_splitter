@@ -1,18 +1,16 @@
-# Änderungen
+# Changelog
 
-## 0.1.0 – 2026-10-18
+## 0.1.0 — 2026-10-18 — Prerelease
 
-Erste Vorabversion für Windows x64.
+- Native C++20 / Win32 application, portable x64 EXE smaller than 1 MB.
+- Minimal interface with real Windows device names and up to five outputs.
+- Separate persistent volume, connect/pause intent and removal per endpoint ID.
+- WASAPI stereo loopback and shared outputs, Windows high-quality resampling.
+- Independent capture/output threads, bounded queues and device recovery.
+- Verified VB-CABLE download, vendor installation/removal UI and optional
+  elevated endpoint rename to “Audio Splitter”.
+- Pinned build toolchain, automated tests, silent native audio test and licenses.
 
-- Native WPF-Oberfläche nach dem abgestimmten Entwurf.
-- Bis zu fünf unabhängige Audioausgaben mit gespeicherter Lautstärke.
-- Verbinden, dauerhafte Pause, automatisches Wiederaufnehmen und Entfernen.
-- Echte Windows-Gerätenamen und eindeutige Endpoint-Zuordnung.
-- VB-CABLE-Download mit SHA-256-Prüfung und offizieller Installations-/Entfernungsoberfläche.
-- Optionales Benennen des virtuellen Windows-Geräts als „Audio Splitter“.
-- Portable, eigenständig lauffähige EXE; Mikrofone werden nicht geöffnet.
-- Automatisierte Tests der Audiozustände, Persistenz und Live-Puffer.
-
-Bekannte Grenzen: keine automatische Synchronisierung verschiedener Bluetooth-
-Latenzen; fünf gleichzeitige Bluetooth-Geräte hängen von der Hardware ab.
-Treiberinstallation und Mehrkopfhörer-Hörtest auf dem Zielrechner stehen aus.
+Known limits: Bluetooth capacity and latency depend on hardware; no automatic
+cross-device clock synchronization. Bluetooth listening tests and driver setup
+on the target machine remain pending. See README for the acceptance checklist.
